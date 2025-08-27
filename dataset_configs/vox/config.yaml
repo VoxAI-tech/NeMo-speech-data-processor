@@ -1,0 +1,86 @@
+documentation: |
+  El Jannah Australia - Drive-Thru Dataset
+  ########################################
+  
+  This config processes El Jannah Australia drive-thru order audio data.
+  
+  The dataset contains customer (mic.wav) and employee (spk.wav) audio files.
+  This config focuses on processing customer audio files (mic.wav) which contain
+  customer speech from drive-thru orders.
+  
+  The data structure is:
+  data/<brand_code>/<country_code>/<device_id>/<year>/<month>/<day>/<hour>/<session_id>/mic.wav
+  
+  For El Jannah Australia: data/ej/au/<device_id>/...
+  
+  This config can be adapted for other brands/countries:
+  - Burger King Poland: data/bk/pl/<device_id>/...
+  - McDonald's USA: data/mc/us/<device_id>/...
+  
+  This config performs the following data processing:
+  
+  1. Creates initial manifest from mic.wav files
+  2. Calculates audio duration
+  3. Converts text to lowercase
+  
+  **Required arguments**:
+  
+  * **workspace_dir**: specify the workspace folder where processed data will be stored
+  * **raw_data_dir**: specify the folder containing the data (parent of brand folders)
+  
+  **Optional arguments**:
+  
+  * **brand_code**: brand code (default: "ej" for El Jannah)
+  * **country_code**: country code (default: "au" for Australia)
+  * **brand_name**: full brand name (default: "El Jannah")
+  * **country_name**: full country name (default: "Australia")
+  * **audio_type**: "mic" for customer audio or "spk" for employee audio (default: "mic")
+  
+  **Output format**:
+  
+  This config generates output manifest file:
+  
+  * ``${workspace_dir}/manifest.json`` - manifest with all mic.wav files
+  
+  Output manifest contains the following fields:
+  
+  * **audio_filepath (str)**: absolute path to the audio file
+  * **text (str)**: transcription (empty - needs to be added)
+  * **duration (float)**: audio duration in seconds
+  * **session_id (str)**: unique session identifier
+  * **device_id (str)**: device identifier from the path
+  * **timestamp (str)**: timestamp in ISO format
+  * **brand (str)**: brand name (e.g., "El Jannah")
+  * **country (str)**: country name (e.g., "Australia")
+  * **dataset_tag (str)**: combined tag (e.g., "El Jannah Australia")
+  * **audio_type (str)**: "customer" or "employee" based on mic/spk selection
+
+processors_to_run: all
+workspace_dir: ???
+raw_data_dir: ./data
+brand_code: "ej"
+country_code: "au"
+brand_name: "El Jannah"
+country_name: "Australia"
+audio_type: "mic"  # Change to "spk" to process employee audio
+final_manifest: ${workspace_dir}/manifest.json
+
+processors:
+  # Create initial manifest from audio files (mic or spk based on audio_type)
+  - _target_: sdp.processors.datasets.vox.create_initial_manifest.CreateInitialManifestVox
+    raw_data_dir: ${raw_data_dir}
+    brand_code: ${brand_code}
+    country_code: ${country_code}
+    brand_name: ${brand_name}
+    country_name: ${country_name}
+    audio_type: ${audio_type}
+    output_manifest_file: ${workspace_dir}/initial_manifest.json
+  
+  # Calculate audio duration for each file
+  - _target_: sdp.processors.GetAudioDuration
+    audio_filepath_key: audio_filepath
+    duration_key: duration
+  
+  # Convert text to lowercase (when text is added)
+  - _target_: sdp.processors.SubMakeLowercase
+    output_manifest_file: ${final_manifest}

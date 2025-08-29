@@ -1,0 +1,42 @@
+documentation: |
+  EJ AU Drive-thru WebDataset Pipeline (Simple Version)
+  =====================================================
+  
+  This is a simplified version using the standard ConvertToTarredAudioDataset processor.
+  Use this if the custom WebDataset creator has issues.
+  
+input_manifest_file: ?? 
+output_dir: ??
+sdp_dir: ??
+cache_dir: ${output_dir}/cache
+
+params:
+  source_lang: en
+  source_lang_full: English
+  min_audio_lid_probability: 0.7
+  min_audio_duration: 0.5
+  max_audio_duration: 20.0
+  use_regex: common
+  save_disk_space: False
+  convert_to_webdataset:
+    should_run: True
+    num_shards: 16
+
+processors_to_run: "all"
+use_dask: False
+
+processors:
+  # Use the last stage from the main pipeline
+  - _target_: sdp.processors.ConvertToTarredAudioDataset
+    input_manifest_file: ${input_manifest_file}
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_final.json
+    min_duration: ${params.min_audio_duration}
+    max_duration: ${params.max_audio_duration}
+    target_dir: ${output_dir}/${params.source_lang}/webdataset
+    num_shards: ${params.convert_to_webdataset.num_shards}
+    buckets_num: 1
+    workers: -1
+    shuffle: True
+    shuffle_seed: 1
+    sort_in_shards: True
+    slice_with_offset: True

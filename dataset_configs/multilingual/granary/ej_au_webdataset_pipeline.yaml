@@ -282,19 +282,16 @@ processors:
       speaker: "unknown"  # Can be updated with speaker diarization
   
   # ========== WEBDATASET CREATION ==========
-  # Note: Skipping session_id and device_id extraction due to LambdaExpression limitations
-  - _target_: sdp.processors.ConvertToTarredAudioDataset
+  # Custom WebDataset creator that preserves session structure and metadata
+  - _target_: sdp.processors.create_webdataset.CreateDriveThruWebDataset
     should_run: ${params.convert_to_webdataset.should_run}
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_final.json
+    output_dir: ${output_dir}/${params.source_lang}/webdataset
+    num_shards: ${params.convert_to_webdataset.num_shards}
+    max_duration_per_shard: ${params.convert_to_webdataset.shard_duration}
+    maintain_session_integrity: ${params.convert_to_webdataset.maintain_session_integrity}
+    shuffle_sessions: True
+    output_format: ${params.convert_to_webdataset.output_format}
+    include_metadata: True
     min_duration: ${params.min_audio_duration}
     max_duration: ${params.max_audio_duration}
-    target_dir: ${output_dir}/${params.source_lang}/webdataset
-    num_shards: ${params.convert_to_webdataset.num_shards}
-    buckets_num: 1
-    force_codec: wav
-    workers: -1
-    shuffle: True
-    shuffle_seed: 1
-    sort_in_shards: False  # Keep session segments together
-    keep_files_together: True  # Maintain session integrity
-    slice_with_offset: True

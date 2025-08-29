@@ -1,0 +1,300 @@
+documentation: |
+  EJ AU Drive-thru WebDataset Pipeline
+  =====================================
+  
+  Complete pipeline for processing drive-thru audio conversations into WebDataset format.
+  Based on Granary pipeline but adapted for drive-thru conversational data.
+  
+  Pipeline Flow:
+  1. Generate initial manifest from hierarchical data structure
+  2. Convert audio to 16kHz mono WAV preserving directory structure
+  3. Detect language and filter for English
+  4. Segment and transcribe with Whisper (optimized for conversational audio)
+  5. Apply quality filtering and grooming
+  6. Restore punctuation with Qwen-2.5
+  7. Package into WebDataset tar files with session integrity
+  
+  Input: Hierarchical audio directory (data/audio/{country}/{location}/{device_id}/...)
+  Output: WebDataset tar archives with WAV audio and JSON metadata
+  
+  Usage:
+    # Generate initial manifest
+    python sdp/processors/create_initial_manifest.py \
+      --data-dir data/audio \
+      --output-manifest data/initial_manifest.json \
+      --audio-type both \
+      --preserve-structure
+    
+    # Run pipeline
+    python main.py \
+      --config-path dataset_configs/multilingual/granary/ \
+      --config-name ej_au_webdataset_pipeline.yaml \
+      input_manifest_file=data/initial_manifest.json \
+      output_dir=outputs/ej_au_webdataset \
+      sdp_dir=.
+  
+input_manifest_file: ?? 
+output_dir: ??
+sdp_dir: ??
+cache_dir: ${output_dir}/cache
+
+params:
+  source_lang: en
+  source_lang_full: English
+  min_audio_lid_probability: 0.7
+  min_audio_duration: 0.5  # Drive-thru segments minimum
+  max_audio_duration: 20.0  # Drive-thru maximum duration
+  use_regex: common
+  save_disk_space: False
+  # WebDataset configuration
+  convert_to_webdataset:
+    should_run: True
+    num_shards: 16
+    shard_duration: 3600  # 1 hour per shard
+    maintain_session_integrity: True
+    output_format: wav
+
+processors_to_run: "all"
+use_dask: False
+
+processors:
+  # ========== AUDIO CONVERSION ==========
+  - _target_: sdp.processors.manage_files.convert_audio_preserve_structure.FfmpegConvertPreserveStructure
+    input_manifest_file: ${input_manifest_file}
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_00.json
+    input_file_key: 'source_audio_filepath'
+    output_file_key: 'audio_filepath'
+    converted_audio_dir: ${output_dir}/${params.source_lang}/converted_audio/
+    target_samplerate: 16000
+    target_nchannels: 1
+    target_format: wav
+  
+  - _target_: sdp.processors.GetAudioDuration
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_01.json
+    audio_filepath_key: 'audio_filepath'
+    duration_key: 'duration'
+  
+  - _target_: sdp.processors.RemoveFiles
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_02.json
+    filepath_field: 'source_audio_filepath' 
+    should_run: ${params.save_disk_space}
+
+  # ========== LANGUAGE DETECTION ==========
+  - _target_: sdp.processors.FasterWhisperInference
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_03.json
+    model_size_or_path: 'large-v3'
+    num_devices: -1
+    output_dir: ${output_dir}/${params.source_lang}/step_03
+    language_detection_only: True
+    inference:
+        language_detection_segments: 7
+        chunk_length: 30
+    save_timestamps_separately: False
+    skip_corrupted_audios: True
+
+  - _target_: sdp.processors.LambdaExpression
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_04.json
+    new_field: 'lid_verified'
+    expression: (entry.language == "${params.source_lang}") & (entry.language_probability >= ${params.min_audio_lid_probability})
+    filter: True
+
+  - _target_: sdp.processors.DropSpecifiedFields
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_05.json
+    fields_to_drop:
+      - source_audio_filepath
+      - language
+      - language_probability
+      - lid_verified
+  
+  # ========== TRANSCRIPTION PASS 1 ==========
+  - _target_: sdp.processors.FasterWhisperInference
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_06.json
+    model_size_or_path: 'large-v3'
+    output_dir: ${output_dir}/${params.source_lang}/step_06
+    num_devices: -1
+    inference:
+        language: ${params.source_lang}
+        initial_prompt: "Drive-thru order conversation between customer and employee."
+        temperature: [0.0]
+        condition_on_previous_text: false
+    save_timestamps_separately: False
+    skip_corrupted_audios: True
+  
+  # ========== SEGMENTATION ==========
+  - _target_: sdp.processors.DropSpecifiedFields
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_07.json
+    fields_to_drop:
+      - duration
+  
+  - _target_: sdp.processors.ListToEntries
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_08.json
+    field_with_list: 'segments'
+  
+  - _target_: sdp.processors.KeepOnlySpecifiedFields
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_09.json
+    fields_to_keep:
+      - audio_filepath
+      - id
+      - start
+      - end
+      - text
+      - language
+  
+  - _target_: sdp.processors.LambdaExpression
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_10.json
+    new_field: 'duration'
+    expression: entry.end - entry.start
+  
+  - _target_: sdp.processors.DropHighLowDuration
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_11.json
+    high_duration_threshold: ${params.max_audio_duration}
+    low_duration_threshold: ${params.min_audio_duration}
+  
+  - _target_: sdp.processors.RenameFields
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_12.json
+    rename_fields: 
+      start: offset 
+      id: segment_id 
+      language: source_lang
+  
+  - _target_: sdp.processors.KeepOnlySpecifiedFields
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_13.json
+    fields_to_keep: 
+      - source_lang
+      - audio_filepath
+      - segment_id
+      - offset
+      - duration
+  
+  # ========== TRANSCRIPTION PASS 2 (with offset slicing) ==========
+  - _target_: sdp.processors.FasterWhisperInference
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_14.json
+    model_size_or_path: 'large-v3'
+    num_devices: -1
+    output_dir: ${output_dir}/${params.source_lang}/step_14
+    inference:
+        language: ${params.source_lang}
+        initial_prompt: "Drive-thru order."
+        temperature: [0.0]
+    save_timestamps_separately: False
+    skip_corrupted_audios: True
+    slice_by_offset: True
+  
+  - _target_: sdp.processors.KeepOnlySpecifiedFields
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_15.json
+    fields_to_keep: 
+      - source_lang
+      - audio_filepath
+      - segment_id
+      - offset
+      - duration
+      - pred_text
+  
+  - _target_: sdp.processors.RenameFields
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_16.json
+    rename_fields:
+      pred_text: text
+
+  # ========== QUALITY FILTERING ==========
+  - _target_: sdp.processors.DropIfRegexMatch
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_17.json
+    text_key: text
+    regex_patterns:
+      - "^\\s*$"
+
+  - _target_: sdp.processors.DetectWhisperHallucinationFeatures
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_18.json
+    common_hall_file: ${sdp_dir}/dataset_configs/multilingual/granary/partials/common_phrases/${params.source_lang}.txt
+    text_field: text
+  
+  - _target_: sdp.processors.LambdaExpression
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_19.json
+    new_field: is_hallucinated
+    expression: (not entry.hall_repeated_ngrams) & (not entry.hall_long_word) & (not entry.hall_frequent_single_word)
+    filter: True
+    
+  - _target_: sdp.processors.KeepOnlySpecifiedFields
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_20.json
+    fields_to_keep: 
+      - source_lang
+      - audio_filepath
+      - segment_id
+      - offset
+      - duration
+      - text
+      
+  # ========== PUNCTUATION RESTORATION ==========
+  - _target_: sdp.processors.vLLMInference
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_21.json
+    generation_field: src_text
+    prompt_file: ${sdp_dir}/dataset_configs/multilingual/granary/partials/pr_recovery_prompts/${params.source_lang}.yaml
+    model:
+      model: "Qwen/Qwen3-8B"  # Using Qwen3-8B model
+      tensor_parallel_size: 1  # Use single GPU
+      max_model_len: 2048
+      enable_chunked_prefill: True
+      max_num_batched_tokens: 1024
+      enforce_eager: True
+      dtype: float16
+      gpu_memory_utilization: 0.75  # Conservative memory usage for 8B model
+      max_num_seqs: 8  # Batch size
+    inference:
+      temperature: 0.7  # Recommended for non-thinking mode
+      top_p: 0.8
+      top_k: 20  # Qwen3 recommended setting
+      repetition_penalty: 1.05
+      max_tokens: 2048
+    apply_chat_template:
+      tokenize: False
+      add_generation_prompt: True
+  
+  - _target_: sdp.processors.CleanQwenGeneration
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_22.json
+    text_field: text
+    generation_field: src_text
+  
+  - _target_: sdp.processors.SubRegex
+    text_key: src_text
+    regex_params_yaml: ${sdp_dir}/dataset_configs/multilingual/granary/partials/subregex_params/${params.use_regex}.yaml
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_23.json
+  
+  - _target_: sdp.processors.DropSpecifiedFields
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_24.json
+    fields_to_drop:
+      - text
+  
+  - _target_: sdp.processors.RenameFields
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_25.json
+    rename_fields:
+      src_text: text
+    
+  # ========== ADD METADATA FIELDS ==========
+  - _target_: sdp.processors.AddConstantFields
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_26.json
+    fields:
+      decodercontext: ""
+      emotion: "<|emo:undefined|>"
+      pnc: "pnc"
+      itn: "itn"
+      timestamp: "notimestamp"
+      diarize: "nodiarize"
+      is_speech_segment: true
+      speaker: "unknown"  # Can be updated with speaker diarization
+  
+  # ========== WEBDATASET CREATION ==========
+  # Note: Skipping session_id and device_id extraction due to LambdaExpression limitations
+  - _target_: sdp.processors.ConvertToTarredAudioDataset
+    should_run: ${params.convert_to_webdataset.should_run}
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_final.json
+    min_duration: ${params.min_audio_duration}
+    max_duration: ${params.max_audio_duration}
+    target_dir: ${output_dir}/${params.source_lang}/webdataset
+    num_shards: ${params.convert_to_webdataset.num_shards}
+    buckets_num: 1
+    force_codec: wav
+    workers: -1
+    shuffle: True
+    shuffle_seed: 1
+    sort_in_shards: False  # Keep session segments together
+    keep_files_together: True  # Maintain session integrity
+    slice_with_offset: True

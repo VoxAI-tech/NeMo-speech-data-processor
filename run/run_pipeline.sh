@@ -22,6 +22,11 @@ INPUT_MANIFEST="${SDP_DIR}/data/initial_manifest.json"
 OUTPUT_DIR="${SDP_DIR}/outputs/ej_au_webdataset"
 CACHE_DIR="${OUTPUT_DIR}/cache"
 
+# Sample limit (can be overridden by command line argument)
+# Usage: ./run/run_pipeline.sh 10    # Process only 10 files
+# Usage: ./run/run_pipeline.sh       # Process all files (default)
+MAX_SAMPLES=${1:--1}  # First argument or -1 for all files
+
 echo -e "${GREEN}=== EJ AU WebDataset Pipeline ===${NC}"
 echo "SDP Directory: ${SDP_DIR}"
 echo "Config: ${CONFIG_PATH}/${CONFIG_NAME}"
@@ -29,6 +34,11 @@ echo "Input Manifest: ${INPUT_MANIFEST}"
 echo "Output Directory: ${OUTPUT_DIR}"
 echo "Cache Directory: ${CACHE_DIR}"
 echo "GPU: ${CUDA_VISIBLE_DEVICES}"
+if [ "$MAX_SAMPLES" = "-1" ]; then
+    echo -e "${GREEN}Processing: ALL files${NC}"
+else
+    echo -e "${YELLOW}Processing: Limited to $MAX_SAMPLES files (testing mode)${NC}"
+fi
 echo ""
 
 # Check if input manifest exists
@@ -79,6 +89,7 @@ uv run python "${SDP_DIR}/main.py" \
     output_dir="${OUTPUT_DIR}" \
     sdp_dir="${SDP_DIR}" \
     cache_dir="${CACHE_DIR}" \
+    params.max_samples="${MAX_SAMPLES}" \
     2>&1 | tee "${LOG_FILE}"
 
 # Check results

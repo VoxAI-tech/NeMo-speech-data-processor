@@ -43,13 +43,15 @@ params:
   source_lang_full: English
   min_audio_lid_probability: 0.7
   min_audio_duration: 0.5  # Drive-thru segments minimum
-  max_audio_duration: 20.0  # Drive-thru maximum duration
+  max_audio_duration: 90.0  # Drive-thru conversations can be longer
   use_regex: common
   save_disk_space: False
+  # Sample limiting (-1 for all files, or specific number like 10, 100, etc.)
+  max_samples: 10  # Set to -1 for all files, or a number like 10 for testing
   # WebDataset configuration
   convert_to_webdataset:
     should_run: True
-    num_shards: 16
+    num_shards: 1  # Use single shard for small test set
     shard_duration: 3600  # 1 hour per shard
     maintain_session_integrity: True
     output_format: wav
@@ -68,6 +70,12 @@ processors:
     target_samplerate: 16000
     target_nchannels: 1
     target_format: wav
+  
+  # ========== SAMPLE LIMITING (for testing) ==========
+  - _target_: sdp.processors.modify_manifest.limit_samples.LimitManifestEntries
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_00_limited.json
+    max_entries: ${params.max_samples}
+    should_run: True  # Always run, but -1 means process all
   
   - _target_: sdp.processors.GetAudioDuration
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_01.json
@@ -281,17 +289,30 @@ processors:
       is_speech_segment: true
       speaker: "unknown"  # Can be updated with speaker diarization
   
-  # ========== WEBDATASET CREATION ==========
-  # Custom WebDataset creator that preserves session structure and metadata
-  - _target_: sdp.processors.create_webdataset.CreateDriveThruWebDataset
-    should_run: ${params.convert_to_webdataset.should_run}
+  # ========== STRUCTURED DATASET CREATION ==========
+  # Create structured dataset with WAV/JSON pairs for HuggingFace (speech segments only)
+  - _target_: sdp.processors.CreateStructuredDataset
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_26.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_structured.json
+    output_dir: ${output_dir}/${params.source_lang}/hf_dataset
+    audio_filepath_key: 'audio_filepath'
+    offset_key: 'offset'
+    duration_key: 'duration'
+    text_key: 'text'
+    should_run: True
+    
+  # ========== WEBDATASET CREATION (OPTIONAL) ==========
+  # Using standard ConvertToTarredAudioDataset processor
+  - _target_: sdp.processors.ConvertToTarredAudioDataset
+    should_run: False  # Disabled since we're using structured dataset
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_final.json
-    output_dir: ${output_dir}/${params.source_lang}/webdataset
-    num_shards: ${params.convert_to_webdataset.num_shards}
-    max_duration_per_shard: ${params.convert_to_webdataset.shard_duration}
-    maintain_session_integrity: ${params.convert_to_webdataset.maintain_session_integrity}
-    shuffle_sessions: True
-    output_format: ${params.convert_to_webdataset.output_format}
-    include_metadata: True
     min_duration: ${params.min_audio_duration}
     max_duration: ${params.max_audio_duration}
+    target_dir: ${output_dir}/${params.source_lang}/webdataset
+    num_shards: ${params.convert_to_webdataset.num_shards}
+    buckets_num: 1
+    workers: 1  # Use single worker to avoid parallel issues
+    shuffle: False  # Disable shuffle for testing
+    shuffle_seed: 1
+    sort_in_shards: False  # Disable sorting for now
+    slice_with_offset: True

@@ -82,7 +82,7 @@ processors:
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_00.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_01.json
     new_field: 'audio_id'
-    expression: entry.device_id + "/" + entry.session_id + "/" + entry.audio_type
+    expression: entry.device_id + "/" + entry.session_id + "/" + ("mic" if entry.audio_type == "customer" else "spk")
 
   # ========== STAGE 2: Limit Manifest Entries (for testing) ==========
   - _target_: sdp.processors.modify_manifest.limit_samples.LimitManifestEntries

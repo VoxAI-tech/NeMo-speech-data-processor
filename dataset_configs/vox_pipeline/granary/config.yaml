@@ -1,0 +1,390 @@
+documentation: |
+  Vox Pipeline - Drive-thru Audio Dataset Creation
+  =================================================
+
+  Overview
+  --------
+  This configuration processes drive-thru audio conversations from El Jannah Australia.
+  It's adapted from the Granary pipeline to handle conversational audio with customer (mic) 
+  and staff (spk) channels, including all quality processing steps except translation.
+
+  Data Structure:
+  - Input: data/audio/ej/au/{device_id}/{year}/{month}/{day}/{hour}/{session_id}/{mic.wav, spk.wav}
+  - Each session has two WAV files: mic (customer) and spk (employee)
+  - 4 devices: 90104C41, 1200UD26, 1840UD05, 1853UD05
+
+  Pipeline Stages:
+  1. Create initial manifest from drive-thru audio directory
+  2. Convert audio to 16kHz mono with preserved structure
+  3. Language detection and filtering
+  4. Two-pass Whisper transcription (segments + slice-by-offset)
+  5. Hallucination detection and filtering
+  6. Punctuation restoration with Qwen-2.5
+  7. Text normalization with regex
+  8. Optional conversion to tarred dataset
+  9. Output final manifest with all metadata
+
+  Usage:
+    python main.py \
+      --config-path dataset_configs/vox_pipeline/granary/ \
+      --config-name config.yaml \
+      data_dir=data/audio \
+      output_dir=outputs/vox_pipeline \
+      sdp_dir=/path/to/NeMo-speech-data-processor
+
+# Required paths - will be set via command line
+data_dir: data/audio  # Root directory containing drive-thru audio
+output_dir: ??  # Output directory for processed data
+sdp_dir: ??  # Path to NeMo-speech-data-processor root
+cache_dir: ${output_dir}/cache
+
+params:
+  # Drive-thru specific parameters
+  audio_channel: mic  # Which channel to process: 'mic', 'spk', or 'both'
+  max_samples: 10  # Limit samples for testing (-1 for all)
+  
+  # Language settings
+  source_lang: en
+  source_lang_full: English
+  min_audio_lid_probability: 0.7
+  
+  # Audio duration settings (adjusted for drive-thru conversations)
+  min_audio_duration: 0.5  # Shorter segments allowed
+  max_audio_duration: 120.0  # Drive-thru conversations can be longer
+  
+  # Text processing
+  use_regex: common
+  
+  # Tarred dataset settings
+  convert_to_audio_tarred_dataset:
+    should_run: False  # Set to True to create tar archives
+    num_shards: 16
+    buckets_num: 1
+  
+  save_disk_space: False
+
+processors_to_run: "all"
+use_dask: False
+
+processors:
+  # ========== STAGE 0: Create Initial Manifest ==========
+  - _target_: sdp.processors.datasets.vox.create_initial_manifest.CreateInitialManifestVox
+    raw_data_dir: ${data_dir}
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_00.json
+    brand_code: "ej"
+    country_code: "au"
+    brand_name: "El Jannah"
+    country_name: "Australia"
+    audio_type: ${params.audio_channel}  # 'mic' or 'spk'
+
+  # ========== STAGE 1: Add unique audio ID for file naming ==========
+  - _target_: sdp.processors.LambdaExpression
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_00.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_01.json
+    new_field: 'audio_id'
+    expression: entry.device_id + "/" + entry.session_id + "/" + entry.audio_type
+
+  # ========== STAGE 2: Limit Manifest Entries (for testing) ==========
+  - _target_: sdp.processors.modify_manifest.limit_samples.LimitManifestEntries
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_01.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_02.json
+    max_entries: ${params.max_samples}  # -1 for all entries
+
+  # ========== STAGE 3: Convert Audio with Preserved Structure ==========
+  - _target_: sdp.processors.FfmpegConvert
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_02.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_03.json
+    input_file_key: 'audio_filepath'
+    output_file_key: 'audio_filepath'
+    id_key: 'audio_id'  # This will create subdirectories
+    converted_audio_dir: ${output_dir}/${params.source_lang}/converted_audio/
+    target_samplerate: 16000
+    target_nchannels: 1
+  
+  # ========== STAGE 4: Get Audio Duration ==========
+  - _target_: sdp.processors.GetAudioDuration
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_03.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_04.json
+    audio_filepath_key: 'audio_filepath'
+    duration_key: 'duration'
+
+  # ========== STAGE 5: Language Detection ==========
+  - _target_: sdp.processors.FasterWhisperInference
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_04.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_05.json
+    model_size_or_path: 'large-v3'
+    num_devices: -1
+    output_dir: ${output_dir}/${params.source_lang}/step_05
+    language_detection_only: True
+    inference:
+        language_detection_segments: 7
+        chunk_length: 30
+    save_timestamps_separately: False
+    skip_corrupted_audios: True
+
+  # ========== STAGE 6: Filter by Language ==========
+  - _target_: sdp.processors.LambdaExpression
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_05.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_06.json
+    new_field: 'lid_verified'
+    expression: (entry.language == "${params.source_lang}") & (entry.language_probability >= ${params.min_audio_lid_probability})
+    filter: True
+
+  # ========== STAGE 7: Clean up language detection fields ==========
+  - _target_: sdp.processors.DropSpecifiedFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_06.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_07.json
+    fields_to_drop:
+      - language
+      - language_probability
+      - lid_verified
+  
+  # ========== STAGE 8: First Transcription Pass (Full Segments) ==========
+  - _target_: sdp.processors.FasterWhisperInference
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_07.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_08.json
+    model_size_or_path: 'large-v3'
+    output_dir: ${output_dir}/${params.source_lang}/step_08
+    num_devices: -1
+    inference:
+        language: ${params.source_lang}
+    save_timestamps_separately: False
+    skip_corrupted_audios: True
+  
+  # ========== STAGE 9: Drop duration before segment extraction ==========
+  - _target_: sdp.processors.DropSpecifiedFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_08.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_09.json
+    fields_to_drop:
+      - duration
+  
+  # ========== STAGE 10: Extract segments from Whisper output ==========
+  - _target_: sdp.processors.ListToEntries
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_09.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_10.json
+    field_with_list: 'segments'
+  
+  # ========== STAGE 11: Keep only relevant fields ==========
+  - _target_: sdp.processors.KeepOnlySpecifiedFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_10.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_11.json
+    fields_to_keep:
+      - audio_filepath
+      - id
+      - start
+      - end
+      - text
+      - language
+      - session_id
+      - device_id
+      - audio_type
+      - audio_id
+  
+  # ========== STAGE 12: Calculate segment duration ==========
+  - _target_: sdp.processors.LambdaExpression
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_11.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_12.json
+    new_field: 'duration'
+    expression: entry.end - entry.start
+  
+  # ========== STAGE 13: Filter by duration ==========
+  - _target_: sdp.processors.DropHighLowDuration
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_12.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_13.json
+    high_duration_threshold: ${params.max_audio_duration}
+    low_duration_threshold: ${params.min_audio_duration}
+  
+  # ========== STAGE 14: Rename fields for second pass ==========
+  - _target_: sdp.processors.RenameFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_13.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_14.json
+    rename_fields: 
+      start: offset 
+      id: segment_id
+      language: source_lang
+  
+  # ========== STAGE 15: Keep fields for second Whisper pass ==========
+  - _target_: sdp.processors.KeepOnlySpecifiedFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_14.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_15.json
+    fields_to_keep: 
+      - source_lang
+      - audio_filepath
+      - segment_id
+      - offset
+      - duration
+      - session_id
+      - device_id
+      - audio_type
+      - audio_id
+  
+  # ========== STAGE 16: Second Whisper Pass (Slice by Offset) ==========
+  - _target_: sdp.processors.FasterWhisperInference
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_15.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_16.json
+    model_size_or_path: 'large-v3'
+    num_devices: -1
+    output_dir: ${output_dir}/${params.source_lang}/step_16
+    inference:
+        language: ${params.source_lang}
+    save_timestamps_separately: False
+    skip_corrupted_audios: True
+    slice_by_offset: True
+  
+  # ========== STAGE 17: Keep fields after second pass ==========
+  - _target_: sdp.processors.KeepOnlySpecifiedFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_16.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_17.json
+    fields_to_keep: 
+      - source_lang
+      - audio_filepath
+      - segment_id
+      - offset
+      - duration
+      - pred_text
+      - session_id
+      - device_id
+      - audio_type
+      - audio_id
+  
+  # ========== STAGE 18: Rename pred_text to text ==========
+  - _target_: sdp.processors.RenameFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_17.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_18.json
+    rename_fields:
+      pred_text: text
+
+  # ========== STAGE 19: Drop empty text ==========
+  - _target_: sdp.processors.DropIfRegexMatch
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_18.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_19.json
+    text_key: text
+    regex_patterns:
+      - "^\\s*$"
+
+  # ========== STAGE 20: Hallucination detection ==========
+  - _target_: sdp.processors.DetectWhisperHallucinationFeatures
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_19.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_20.json
+    common_hall_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/common_phrases/${params.source_lang}.txt
+    text_field: text
+  
+  # ========== STAGE 21: Filter hallucinations ==========
+  - _target_: sdp.processors.LambdaExpression
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_20.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_21.json
+    new_field: is_hallucinated
+    expression: (not entry.hall_repeated_ngrams) & (not entry.hall_long_word) & (not entry.hall_frequent_single_word)
+    filter: True
+    
+  # ========== STAGE 22: Clean hallucination fields ==========
+  - _target_: sdp.processors.KeepOnlySpecifiedFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_21.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_22.json
+    fields_to_keep: 
+      - source_lang
+      - audio_filepath
+      - segment_id
+      - offset
+      - duration
+      - text
+      - audio_type
+      - device_id
+      - session_id
+      - audio_id
+      
+  # ========== STAGE 23: Punctuation & Capitalization Restoration ==========
+  - _target_: sdp.processors.vLLMInference
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_22.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_23.json
+    generation_field: src_text
+    prompt_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/pr_recovery_prompts/${params.source_lang}.yaml
+    model:
+      model: "Qwen/Qwen3-8B"  # Using Qwen3-8B model
+      tensor_parallel_size: 1  # Use single GPU
+      max_model_len: 1024  # Reduced for memory efficiency
+      enable_chunked_prefill: True
+      max_num_batched_tokens: 512  # Reduced for memory efficiency
+      enforce_eager: True
+      dtype: float16
+      gpu_memory_utilization: 0.85  # Conservative memory usage
+      max_num_seqs: 4  # Reduced batch size
+    inference:
+      temperature: 0.3  # Recommended for non-thinking mode
+      top_p: 0.8  # Recommended for non-thinking mode
+      top_k: 20  # Qwen3 recommended setting
+      repetition_penalty: 1.05  # Slight penalty for better output
+      max_tokens: 256  # Sufficient for punctuation restoration
+    apply_chat_template:
+      tokenize: False
+      add_generation_prompt: True
+      enable_thinking: False  # Disable Qwen3 thinking mode
+  
+  # ========== STAGE 24: Clean Qwen Generation ==========
+  - _target_: sdp.processors.CleanQwenGeneration
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_23.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_24.json
+    text_field: text
+    generation_field: src_text
+  
+  # ========== STAGE 25: Text Normalization with Regex ==========
+  - _target_: sdp.processors.SubRegex
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_25.json
+    text_key: src_text
+    regex_params_yaml: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/subregex_params/${params.use_regex}.yaml
+  
+  # ========== STAGE 26: Drop original text field ==========
+  - _target_: sdp.processors.DropSpecifiedFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_25.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_26.json
+    fields_to_drop:
+      - text
+  
+  # ========== STAGE 27: Rename cleaned text field ==========
+  - _target_: sdp.processors.RenameFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_26.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_27.json
+    rename_fields:
+      src_text: text
+      
+  # ========== STAGE 28: Add constant metadata fields ==========
+  - _target_: sdp.processors.AddConstantFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_27.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_28.json
+    fields:
+      dataset: "ej_au_drive_thru"
+      language: ${params.source_lang}
+    
+  # ========== STAGE 29: Final field selection ==========
+  - _target_: sdp.processors.KeepOnlySpecifiedFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_28.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_29.json
+    fields_to_keep:
+      - audio_filepath
+      - text
+      - duration
+      - offset
+      - segment_id
+      - audio_type
+      - device_id
+      - session_id
+      - audio_id
+      - dataset
+      - language
+  
+  # ========== STAGE 30: Convert to Tarred Audio Dataset (Optional) ==========
+  - _target_: sdp.processors.ConvertToTarredAudioDataset
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_29.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_30.json
+    should_run: ${params.convert_to_audio_tarred_dataset.should_run}
+    min_duration: ${params.min_audio_duration}
+    max_duration: ${params.max_audio_duration}
+    target_dir: ${output_dir}/${params.source_lang}/tarred_dataset
+    num_shards: ${params.convert_to_audio_tarred_dataset.num_shards}
+    buckets_num: ${params.convert_to_audio_tarred_dataset.buckets_num}
+    workers: -1
+    shuffle: True
+    shuffle_seed: 1
+    sort_in_shards: True
+    slice_with_offset: True

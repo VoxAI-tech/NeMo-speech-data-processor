@@ -63,8 +63,19 @@ class CleanQwenGeneration(BaseParallelProcessor):
 
     def clean(self, generation):
         """Remove template prompts and special tokens from model generation."""
+        # Remove end-of-text token if present
         if "<|endoftext|>" in generation:
             generation = generation.split("<|endoftext|>")[0]
+        
+        # Remove Qwen3 special tokens
+        if "<|im_end|>" in generation:
+            generation = generation.split("<|im_end|>")[0]
+        
+        if "<|im_start|>" in generation:
+            # Extract content after the last im_start token
+            parts = generation.split("<|im_start|>")
+            if len(parts) > 1:
+                generation = parts[-1]
 
         if "Input transcript:" in generation:
             generation = generation.replace("Input transcript:", "")

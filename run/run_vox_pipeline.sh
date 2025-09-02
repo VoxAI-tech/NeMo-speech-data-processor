@@ -46,7 +46,7 @@ echo "======================================"
 mkdir -p ${OUTPUT_DIR}
 
 # Build the command with all parameters
-CMD="python ${SDP_DIR}/main.py \
+CMD="uv run python ${SDP_DIR}/main.py \
     --config-path ${SDP_DIR}/dataset_configs/vox_pipeline/granary/ \
     --config-name ${CONFIG_NAME} \
     data_dir=${DATA_DIR} \

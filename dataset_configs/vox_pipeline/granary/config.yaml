@@ -327,26 +327,80 @@ processors:
     text_field: text
     generation_field: src_text
   
+  # ========== STAGE 24a: Menu-Aware Correction (Fuzzy Matching) ==========
+  - _target_: sdp.processors.menu_aware_correction.MenuAwareCorrection
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_24a.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24.json
+    menu_vocabulary_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/menu_vocabulary.json
+    text_field: src_text
+    corrected_field: text_menu_corrected
+    fuzzy_threshold: 80
+    context_window: 3
+    save_corrections: True
+  
+  # ========== STAGE 24b: LLM Menu Context Correction ==========
+  - _target_: sdp.processors.vLLMInference
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24a.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_24b.json
+    generation_field: text_llm_corrected
+    prompt_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/menu_correction_prompts/${params.source_lang}.yaml
+    model:
+      model: "Qwen/Qwen3-8B"
+      tensor_parallel_size: 1
+      max_model_len: 2048  # Increased for menu context
+      enable_chunked_prefill: True
+      max_num_batched_tokens: 1024  # Increased for context
+      enforce_eager: True
+      dtype: float16
+      gpu_memory_utilization: 0.90  # Slightly higher utilization
+      max_num_seqs: 2  # Smaller batch for better quality
+    inference:
+      temperature: 0.2  # Lower for more consistent corrections
+      top_p: 0.9  # Higher for better coverage
+      top_k: 40  # Increased for menu vocabulary
+      repetition_penalty: 1.1  # Avoid repetitive corrections
+      max_tokens: 256
+    apply_chat_template:
+      tokenize: False
+      add_generation_prompt: True
+      enable_thinking: False
+  
+  # ========== STAGE 24c: Cross-Channel Validation (if both channels available) ==========
+  - _target_: sdp.processors.cross_channel_validation.CrossChannelValidation
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_24c.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24b.json
+    text_field: text_llm_corrected
+    validated_field: text_validated
+    confidence_field: cross_channel_confidence
+    similarity_threshold: 0.7
+    use_cleaner_channel: True  # Prefer speaker channel (cleaner)
+    merge_strategy: best_confidence
+  
   # ========== STAGE 25: Text Normalization with Regex ==========
   - _target_: sdp.processors.SubRegex
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24c.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_25.json
-    text_key: src_text
+    text_key: text_validated
     regex_params_yaml: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/subregex_params/${params.use_regex}.yaml
   
-  # ========== STAGE 26: Drop original text field ==========
+  # ========== STAGE 26: Drop intermediate text fields ==========
   - _target_: sdp.processors.DropSpecifiedFields
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_25.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_26.json
     fields_to_drop:
       - text
+      - src_text
+      - text_menu_corrected
+      - text_llm_corrected
+      - menu_corrections
+      - validation_metadata
   
   # ========== STAGE 27: Rename cleaned text field ==========
   - _target_: sdp.processors.RenameFields
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_26.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_27.json
     rename_fields:
-      src_text: text
+      text_validated: text
       
   # ========== STAGE 28: Add constant metadata fields ==========
   - _target_: sdp.processors.AddConstantFields
@@ -372,6 +426,8 @@ processors:
       - audio_id
       - dataset
       - language
+      - cross_channel_confidence
+      - cross_validated
   
   # ========== STAGE 30: Convert to Tarred Audio Dataset (Optional) ==========
   - _target_: sdp.processors.ConvertToTarredAudioDataset

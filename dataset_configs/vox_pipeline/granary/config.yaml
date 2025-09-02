@@ -40,8 +40,8 @@ cache_dir: ${output_dir}/cache
 
 params:
   # Drive-thru specific parameters
-  audio_channel: mic  # Which channel to process: 'mic', 'spk', or 'both'
-  max_samples: 10  # Limit samples for testing (-1 for all)
+  audio_channel: spk  # Which channel to process: 'mic', 'spk', or 'both'
+  max_samples: 100  # Limit samples for testing (-1 for all)
   
   # Language settings
   source_lang: en

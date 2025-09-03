@@ -57,8 +57,8 @@ params:
   
   # Tarred dataset settings
   convert_to_audio_tarred_dataset:
-    should_run: False  # Set to True to create tar archives
-    num_shards: 16
+    should_run: false  # Set to true to create tar archives
+    num_shards: 1  # Reduced to 1 shard for small datasets (adjust based on data size)
     buckets_num: 1
   
   save_disk_space: False
@@ -365,16 +365,21 @@ processors:
       add_generation_prompt: True
       enable_thinking: False
   
-  # ========== STAGE 24c: Cross-Channel Validation (if both channels available) ==========
-  - _target_: sdp.processors.cross_channel_validation.CrossChannelValidation
+  # ========== STAGE 24c: Enhanced Cross-Channel Validation with Audio Bleeding Correction ==========
+  - _target_: sdp.processors.enhanced_cross_channel_validation.EnhancedCrossChannelValidation
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_24c.json
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24b.json
+    speaker_manifest_file: ${output_dir}/${params.source_lang}/manifest_24b_spk.json  # Speaker channel manifest
     text_field: text_llm_corrected
     validated_field: text_validated
     confidence_field: cross_channel_confidence
+    bleeding_field: audio_bleeding_detected
+    correction_source_field: correction_source
     similarity_threshold: 0.7
-    use_cleaner_channel: True  # Prefer speaker channel (cleaner)
-    merge_strategy: best_confidence
+    bleeding_detection_threshold: 0.8  # Threshold for detecting audio bleeding
+    time_tolerance: 0.5  # 500ms tolerance for timestamp matching
+    prefer_speaker_channel: True  # Prefer cleaner speaker channel
+    min_speaker_duration: 1.0  # Minimum duration to use speaker channel
   
   # ========== STAGE 25: Text Normalization with Regex ==========
   - _target_: sdp.processors.SubRegex
@@ -394,6 +399,7 @@ processors:
       - text_llm_corrected
       - menu_corrections
       - validation_metadata
+      - num_corrections  # Drop if exists
   
   # ========== STAGE 27: Rename cleaned text field ==========
   - _target_: sdp.processors.RenameFields
@@ -411,7 +417,7 @@ processors:
       language: ${params.source_lang}
     
   # ========== STAGE 29: Final field selection ==========
-  - _target_: sdp.processors.KeepOnlySpecifiedFields
+  - _target_: sdp.processors.flexible_field_keeper.FlexibleKeepFields
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_28.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_29.json
     fields_to_keep:
@@ -427,7 +433,8 @@ processors:
       - dataset
       - language
       - cross_channel_confidence
-      - cross_validated
+      - audio_bleeding_detected
+      - correction_source
   
   # ========== STAGE 30: Convert to Tarred Audio Dataset (Optional) ==========
   - _target_: sdp.processors.ConvertToTarredAudioDataset
@@ -439,6 +446,7 @@ processors:
     target_dir: ${output_dir}/${params.source_lang}/tarred_dataset
     num_shards: ${params.convert_to_audio_tarred_dataset.num_shards}
     buckets_num: ${params.convert_to_audio_tarred_dataset.buckets_num}
+    dynamic_buckets_num: 0  # Disable dynamic bucketing for small datasets
     workers: -1
     shuffle: True
     shuffle_seed: 1

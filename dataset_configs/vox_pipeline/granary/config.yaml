@@ -407,6 +407,7 @@ processors:
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_27.json
     rename_fields:
       text_validated: text
+      offset: source_audio_offset  # Rename for speech dataset processor
       
   # ========== STAGE 28: Add constant metadata fields ==========
   - _target_: sdp.processors.AddConstantFields
@@ -424,7 +425,7 @@ processors:
       - audio_filepath
       - text
       - duration
-      - offset
+      - source_audio_offset  # Renamed from offset
       - segment_id
       - audio_type
       - device_id
@@ -436,19 +437,33 @@ processors:
       - audio_bleeding_detected
       - correction_source
   
-  # ========== STAGE 30: Convert to Tarred Audio Dataset (Optional) ==========
-  - _target_: sdp.processors.ConvertToTarredAudioDataset
+  # ========== STAGE 30: Convert to WebDataset (TAR archives with wav/json pairs) ==========
+  - _target_: sdp.processors.convert_to_webdataset.ConvertToWebDataset
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_29.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_30.json
-    should_run: ${params.convert_to_audio_tarred_dataset.should_run}
-    min_duration: ${params.min_audio_duration}
-    max_duration: ${params.max_audio_duration}
-    target_dir: ${output_dir}/${params.source_lang}/tarred_dataset
-    num_shards: ${params.convert_to_audio_tarred_dataset.num_shards}
-    buckets_num: ${params.convert_to_audio_tarred_dataset.buckets_num}
-    dynamic_buckets_num: 0  # Disable dynamic bucketing for small datasets
-    workers: -1
-    shuffle: True
-    shuffle_seed: 1
-    sort_in_shards: True
-    slice_with_offset: True
+    output_dir: ${output_dir}/${params.source_lang}/webdataset
+    shard_size: 100  # MB per shard (use smaller size for testing)
+    split: train  # Dataset split name
+    prefix: shard  # Prefix for TAR files
+    shuffle: True  # Shuffle samples before sharding
+    shuffle_seed: 42
+    slice_with_offset: True  # Extract segments using offset/duration
+    audio_type_field: audio_type
+    include_metadata: True  # Include all metadata in JSON files
+    
+  # ========== STAGE 31: Convert to Tarred Audio Dataset (Optional) ==========
+  # - _target_: sdp.processors.ConvertToTarredAudioDataset
+  #   input_manifest_file: ${output_dir}/${params.source_lang}/manifest_30.json
+  #   output_manifest_file: ${output_dir}/${params.source_lang}/manifest_31.json
+  #   should_run: ${params.convert_to_audio_tarred_dataset.should_run}
+  #   min_duration: ${params.min_audio_duration}
+  #   max_duration: ${params.max_audio_duration}
+  #   target_dir: ${output_dir}/${params.source_lang}/tarred_dataset
+  #   num_shards: ${params.convert_to_audio_tarred_dataset.num_shards}
+  #   buckets_num: ${params.convert_to_audio_tarred_dataset.buckets_num}
+  #   dynamic_buckets_num: 0  # Disable dynamic bucketing for small datasets
+  #   workers: -1
+  #   shuffle: True
+  #   shuffle_seed: 1
+  #   sort_in_shards: True
+  #   slice_with_offset: True

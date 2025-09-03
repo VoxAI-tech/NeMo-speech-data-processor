@@ -1,87 +1,49 @@
 #!/usr/bin/env -S uv run python
 """
-CLI tool to upload datasets to HuggingFace Hub in webdataset structure.
-Searches for wav/json pairs, optionally shuffles them, and distributes them into tar files for upload to HF Hub.
-
-To properly configure dataset subsets and splits in the README.md frontmatter, use this structure:
-
----
-configs:
-- config_name: default
-  data_files:
-  - split: train
-    path: "train/*.tar"
-  - split: validation
-    path: "validation/*.tar"
-  - split: test
-    path: "test/*.tar"
----
-
-For multiple subsets, each with their own splits:
----
-configs:
-- config_name: subset1
-  data_files:
-  - split: train
-    path: "subset1/train/*.tar"
-  - split: validation
-    path: "subset1/validation/*.tar"
-- config_name: subset2
-  data_files:
-  - split: train
-    path: "subset2/train/*.tar"
-  - split: validation
-    path: "subset2/validation/*.tar"
----
-
-Then load with: load_dataset("repo_id", name="subset_name", split="split_name")
+Upload WebDataset TAR archives to HuggingFace Hub.
 """
 
 import json
 import pathlib
 import tempfile
 import time
-
-from typing import List
-
 import click
 import yaml
-
 from huggingface_hub import HfApi, create_repo
 
 
-def upload_to_hf_hub(
-    tar_files: List[pathlib.Path],
+def upload_webdataset_to_hf(
+    webdataset_dir: pathlib.Path,
     repo_id: str,
     token: str = None,
-    subset: str = None,
-    split: str = "train",
 ) -> None:
-    """Upload tar files to HuggingFace Hub."""
+    """Upload WebDataset TAR files to HuggingFace Hub."""
     api = HfApi(token=token)
-
+    
     # Create repository if it doesn't exist
     try:
         repo_url = create_repo(
             repo_id, token=token, private=True, exist_ok=True, repo_type="dataset"
         )
         print(f"Repository {repo_id} ready at {repo_url}")
-        # Wait after repository creation to avoid race conditions
         print("Waiting 5 seconds after repository creation...")
         time.sleep(5)
     except Exception as e:
         print(f"Warning: Could not create/access repository: {e}")
-        # Try to continue anyway in case repo already exists
-
-    # Upload each tar file
+    
+    # Find all TAR files in train directory
+    train_dir = webdataset_dir / "train"
+    tar_files = list(train_dir.glob("*.tar"))
+    
+    print(f"Found {len(tar_files)} TAR files to upload")
+    
+    # Upload each TAR file
+    uploaded_count = 0
     for tar_file in tar_files:
         try:
-            # Flatten directory structure - use just the filename since they're uniquely named
-            if subset:
-                path_in_repo = f"{subset}/{split}/{tar_file.name}"
-            else:
-                path_in_repo = f"{split}/{tar_file.name}"
-
+            # Upload to train/ directory in repo
+            path_in_repo = f"train/{tar_file.name}"
+            
             api.upload_file(
                 path_or_fileobj=str(tar_file),
                 path_in_repo=path_in_repo,
@@ -89,86 +51,186 @@ def upload_to_hf_hub(
                 token=token,
                 repo_type="dataset",
             )
+            uploaded_count += 1
             print(f"Uploaded {tar_file.name} to {path_in_repo}")
+            
         except Exception as e:
             print(f"Error uploading {tar_file.name}: {e}")
+    
+    # Upload metadata if exists
+    metadata_file = webdataset_dir / "dataset_metadata.json"
+    if metadata_file.exists():
+        try:
+            # Don't put in data folder - causes loading issues
+            api.upload_file(
+                path_or_fileobj=str(metadata_file),
+                path_in_repo="dataset_info.json",
+                repo_id=repo_id,
+                token=token,
+                repo_type="dataset",
+            )
+            print("Uploaded dataset_info.json")
+        except Exception as e:
+            print(f"Error uploading metadata: {e}")
+    
+    print(f"Successfully uploaded {uploaded_count} TAR files")
 
 
-def create_readme_frontmatter(
-    repo_id: str, token: str = None, subset: str = None, split: str = "train"
+def create_webdataset_card(
+    webdataset_dir: pathlib.Path,
+    repo_id: str,
+    token: str = None,
 ) -> None:
-    """Create or update README.md with dataset frontmatter, merging configurations."""
+    """Create dataset card for WebDataset."""
     api = HfApi(token=token)
+    
+    # Read metadata if available
+    metadata = {}
+    metadata_file = webdataset_dir / "dataset_metadata.json"
+    if metadata_file.exists():
+        with open(metadata_file, 'r') as f:
+            metadata = json.load(f)
+    
+    readme_content = f"""---
+task_categories:
+- automatic-speech-recognition
+- text-to-speech
+language:
+- en
+tags:
+- audio
+- speech
+- webdataset
+- drive-thru
+- conversational
+pretty_name: Drive-Thru Speech WebDataset
+size_categories:
+- n<1K
+license: apache-2.0
+configs:
+- config_name: default
+  data_files:
+  - split: train
+    path: "train/*.tar"
+---
 
-    # Prepare new configuration
-    if subset:
-        path_pattern = f"{subset}/{split}/*.tar"
-        config_name = subset
-    else:
-        path_pattern = f"{split}/*.tar"
-        config_name = "default"
+# Drive-Thru Speech WebDataset
 
-    new_config = {
-        "config_name": config_name,
-        "data_files": [{"split": split, "path": path_pattern}],
-    }
+This dataset is in WebDataset format, optimized for efficient streaming and loading with PyTorch DataLoaders.
 
-    # Try to get existing README and parse frontmatter
-    existing_configs = []
-    readme_content = "# Dataset\n\nThis dataset contains audio files organized in webdataset format.\n"
+## Dataset Statistics
 
+- **Format**: WebDataset (TAR archives)
+- **Total shards**: {metadata.get('total_shards', 'N/A')}
+- **Total samples**: {metadata.get('total_samples', 'N/A')}
+- **Total duration**: {metadata.get('total_duration_hours', 0):.2f} hours
+- **Audio types**: {metadata.get('audio_types', {})}
+
+## WebDataset Structure
+
+Each TAR archive contains:
+- `.wav` files: 16kHz mono audio segments
+- `.json` files: Metadata and transcriptions
+
+Files are paired by session and segment ID (e.g., `4ba42c95-b899-4bf1-8042-bf532e66e6b7_segment_0001.wav` and `4ba42c95-b899-4bf1-8042-bf532e66e6b7_segment_0001.json`).
+
+## Usage
+
+### With HuggingFace Datasets
+
+```python
+from datasets import load_dataset
+
+# Load the dataset
+dataset = load_dataset("{repo_id}", streaming=True)
+
+# Iterate through samples
+for sample in dataset['train']:
+    audio = sample['audio']
+    text = sample['text']
+```
+
+### With WebDataset Library
+
+```python
+import webdataset as wds
+from torch.utils.data import DataLoader
+
+# Create WebDataset
+url = "https://huggingface.co/datasets/{repo_id}/resolve/main/train/shard_{{000000..{metadata.get('total_shards', 1)-1:06d}}}.tar"
+dataset = wds.WebDataset(url).decode()
+
+# Create DataLoader
+dataloader = DataLoader(dataset, batch_size=32, num_workers=4)
+
+# Iterate through batches
+for batch in dataloader:
+    wav_data = batch['wav']
+    metadata = batch['json']
+```
+
+### Direct Streaming
+
+```python
+import webdataset as wds
+
+# Stream directly from HuggingFace
+url = "pipe:curl -s -L https://huggingface.co/datasets/{repo_id}/resolve/main/train/shard_000000.tar"
+dataset = wds.WebDataset(url).decode()
+
+for sample in dataset:
+    audio = sample['wav']
+    text = json.loads(sample['json'])['text']
+```
+
+## Data Fields
+
+Each JSON metadata file contains:
+
+- `text`: Transcription with corrections
+- `transcription`: Alternative transcription key
+- `segment_id`: Segment identifier
+- `duration`: Audio duration in seconds
+- `offset`: Original offset in source audio
+- `session_id`: Recording session ID
+- `device_id`: Recording device ID
+- `audio_type`/`speaker`: Speaker type (customer/employee)
+- `confidence`: Transcription confidence score
+- `audio_bleeding`: Whether audio bleeding was detected
+- `correction_source`: Source of transcription correction
+- `language`: Language code
+
+## Processing Pipeline
+
+1. **Segmentation**: Split into speech segments
+2. **Transcription**: High-quality ASR transcription
+3. **Menu-aware Correction**: Context-aware corrections for menu items
+4. **Cross-channel Validation**: Enhanced validation using dual-channel audio
+5. **WebDataset Creation**: Packed into TAR archives for efficient streaming
+
+## Performance
+
+WebDataset format provides:
+- **Efficient I/O**: Sequential reads from TAR archives
+- **Streaming**: Direct streaming from cloud storage
+- **Sharding**: Distributed training support
+- **Shuffling**: Efficient approximate shuffling
+
+## License
+
+Apache 2.0
+
+## Acknowledgments
+
+Processed using NeMo Speech Data Processor with enhanced cross-channel validation and menu-aware correction.
+"""
+    
     try:
-        existing_readme = api.hf_hub_download(
-            repo_id=repo_id, filename="README.md", repo_type="dataset", token=token
-        )
-        with open(existing_readme, "r") as f:
-            content = f.read()
-
-        # Parse existing YAML frontmatter
-        if content.startswith("---"):
-            parts = content.split("---", 2)
-            if len(parts) >= 3:
-                try:
-                    frontmatter_yaml = parts[1].strip()
-                    frontmatter_data = yaml.safe_load(frontmatter_yaml)
-                    if frontmatter_data and "configs" in frontmatter_data:
-                        existing_configs = frontmatter_data["configs"]
-                    readme_content = parts[2].strip()
-                except yaml.YAMLError:
-                    pass  # Invalid YAML, start fresh
-
-    except:
-        pass  # No existing README
-
-    # Merge configurations - update existing or add new
-    merged_configs = []
-    config_updated = False
-
-    for config in existing_configs:
-        if config.get("config_name") == config_name:
-            # Update existing config
-            merged_configs.append(new_config)
-            config_updated = True
-        else:
-            # Keep existing config
-            merged_configs.append(config)
-
-    # Add new config if not found
-    if not config_updated:
-        merged_configs.append(new_config)
-
-    # Generate new frontmatter
-    frontmatter_data = {"configs": merged_configs}
-    frontmatter_yaml = yaml.dump(frontmatter_data, default_flow_style=False)
-
-    full_content = f"---\n{frontmatter_yaml}---\n\n{readme_content}"
-
-    try:
-        # Upload updated README
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
-            f.write(full_content)
+        # Upload README
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as f:
+            f.write(readme_content)
             temp_readme = f.name
-
+        
         api.upload_file(
             path_or_fileobj=temp_readme,
             path_in_repo="README.md",
@@ -176,119 +238,63 @@ def create_readme_frontmatter(
             token=token,
             repo_type="dataset",
         )
-
-        pathlib.Path(temp_readme).unlink()  # Clean up temp file
-        print(f"Updated README.md with merged frontmatter for {config_name}/{split}")
-
+        
+        pathlib.Path(temp_readme).unlink()
+        print("Created and uploaded dataset card (README.md)")
+        
     except Exception as e:
-        print(f"Warning: Could not update README.md: {e}")
+        print(f"Warning: Could not create dataset card: {e}")
 
 
 @click.command()
-@click.argument("tar_dir", type=click.Path(exists=True, path_type=pathlib.Path))
+@click.argument("webdataset_dir", type=click.Path(exists=True, path_type=pathlib.Path))
 @click.argument("repo_id", type=str)
 @click.option("--token", type=str, help="HuggingFace token (optional if logged in)")
-@click.option(
-    "--dry-run",
-    is_flag=True,
-    help="Don't upload to hub, just show what would be uploaded",
-)
-@click.option("--subset", type=str, help="Subset name to organize files under")
-@click.option("--split", type=str, default="train", help="Split name for the dataset")
-@click.option(
-    "--add-duration-postfix",
-    is_flag=True,
-    help="Add duration postfix from metadata JSON file to repo name (e.g., '-5h')",
-)
+@click.option("--dry-run", is_flag=True, help="Show what would be uploaded without uploading")
 def main(
-    tar_dir: pathlib.Path,
+    webdataset_dir: pathlib.Path,
     repo_id: str,
     token: str,
     dry_run: bool,
-    subset: str,
-    split: str,
-    add_duration_postfix: bool,
 ):
     """
-    Upload existing WebDataset tar files to HuggingFace Hub.
-
-    TAR_DIR should contain .tar files created by create_ws_tars.py.
-    The script will upload all tar files in the directory to HF Hub.
-
+    Upload WebDataset TAR archives to HuggingFace Hub.
+    
+    WEBDATASET_DIR should contain the webdataset with train/ subdirectory containing TAR files.
+    
     Example:
-        python push_webdataset_to_hf.py /path/to/tar/files my-org/my-dataset
-        python push_webdataset_to_hf.py /path/to/tar/files my-org/my-dataset --subset music --split train
+        python push_webdataset_to_hf.py outputs/webdataset my-org/my-dataset
     """
-
-    # Find all tar files in the directory (including subdirectories)
-    print(f"Searching for tar files in {tar_dir}...")
-    tar_files = list(tar_dir.rglob("*.tar"))
-
+    
+    # Check for TAR files
+    train_dir = webdataset_dir / "train"
+    if not train_dir.exists():
+        raise click.ClickException(f"Train directory not found: {train_dir}")
+    
+    tar_files = list(train_dir.glob("*.tar"))
     if not tar_files:
-        raise click.ClickException(f"No .tar files found in {tar_dir}")
-
-    # Check that all tar filenames are unique (to prevent conflicts when flattening)
-    filenames = [tar_file.name for tar_file in tar_files]
-    duplicates = [name for name in filenames if filenames.count(name) > 1]
-    if duplicates:
-        raise click.ClickException(
-            f"Duplicate tar filenames found: {set(duplicates)}. Use unique --tar-prefix values to avoid conflicts."
-        )
-
-    print(f"Found {len(tar_files)} tar files with unique names")
-
-    # Modify repo_id with duration postfix if requested
-    final_repo_id = repo_id
-    if add_duration_postfix:
-        # Look for metadata JSON files (e.g., *_metadata.json)
-        metadata_files = list(tar_dir.rglob("*_metadata.json"))
-        if metadata_files:
-            metadata_file = metadata_files[0]  # Use first one found
-            try:
-                with open(metadata_file, "r") as f:
-                    metadata = json.load(f)
-
-                duration_hours = metadata.get("duration_hours", 0)
-                if duration_hours > 0:
-                    # Round up to nearest hour
-                    import math
-
-                    rounded_hours = math.ceil(duration_hours)
-                    final_repo_id = f"{repo_id}-{rounded_hours}h"
-                    print(f"Added duration postfix: {repo_id} -> {final_repo_id}")
-                else:
-                    print(
-                        "Warning: Duration not found in metadata, using original repo name"
-                    )
-            except Exception as e:
-                print(f"Warning: Could not read metadata file {metadata_file}: {e}")
-                print("Using original repo name")
-        else:
-            print("Warning: No metadata JSON file found, using original repo name")
-
+        raise click.ClickException(f"No TAR files found in {train_dir}")
+    
+    print(f"Found {len(tar_files)} TAR files in {train_dir}")
+    
+    # Calculate total size
+    total_size = sum(f.stat().st_size for f in tar_files)
+    print(f"Total size: {total_size / (1024**2):.2f} MB")
+    
     if dry_run:
-        print(
-            f"\nDry run - would upload {len(tar_files)} tar files to {final_repo_id}:"
-        )
+        print(f"\nDry run - would upload to {repo_id}:")
         for tar_file in tar_files:
-            # Flatten directory structure - use just the filename since they're uniquely named
-            if subset:
-                path_in_repo = f"{subset}/{split}/{tar_file.name}"
-            else:
-                path_in_repo = f"{split}/{tar_file.name}"
-            print(f"  {tar_file.name} -> {path_in_repo}")
+            print(f"  train/{tar_file.name} ({tar_file.stat().st_size / (1024**2):.2f} MB)")
         return
-
+    
     # Upload to HuggingFace Hub
-    print("Uploading to HuggingFace Hub...")
-
-    upload_to_hf_hub(tar_files, final_repo_id, token, subset, split)
-
-    # Create/update README with frontmatter
-    create_readme_frontmatter(final_repo_id, token, subset, split)
-
-    print(f"\nDataset uploaded to {final_repo_id}")
-    print(f"Tar files uploaded: {len(tar_files)}")
+    print(f"\nUploading to HuggingFace Hub: {repo_id}")
+    
+    upload_webdataset_to_hf(webdataset_dir, repo_id, token)
+    create_webdataset_card(webdataset_dir, repo_id, token)
+    
+    print(f"\nDataset uploaded to {repo_id}")
+    print(f"View at: https://huggingface.co/datasets/{repo_id}")
 
 
 if __name__ == "__main__":

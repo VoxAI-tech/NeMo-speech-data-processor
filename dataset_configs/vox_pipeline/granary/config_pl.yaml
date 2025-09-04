@@ -1,0 +1,426 @@
+documentation: |
+  Vox Pipeline - BK Poland Drive-thru Audio Dataset Creation
+  ===========================================================
+  
+  Overview
+  --------
+  This configuration processes drive-thru audio conversations from Burger King Poland.
+  Handles Polish language audio with customer (mic) and staff (spk) channels.
+  
+  Data Structure:
+  - Input: data/audio/bk/{device_id}/{year}/{month}/{day}/{hour}/{session_id}/{mic.wav, spk.wav}
+  - Each session has two WAV files: mic (customer) and spk (employee)
+  
+  Pipeline Stages:
+  1. Create initial manifest from drive-thru audio directory
+  2. Convert audio to 16kHz mono with preserved structure
+  3. Language detection and filtering (Polish)
+  4. Two-pass Whisper transcription (segments + slice-by-offset)
+  5. Hallucination detection and filtering
+  6. Menu fuzzy matching (first pass correction)
+  7. Gemini audio verification (listen to audio for spelling corrections)
+  8. Qwen punctuation/capitalization restoration
+  9. Text normalization with regex
+  10. Optional conversion to tarred dataset
+  11. Output final manifest with all metadata
+  
+  Usage:
+    python main.py \
+      --config-path dataset_configs/vox_pipeline/granary/ \
+      --config-name config_pl.yaml \
+      data_dir=data/audio \
+      output_dir=outputs/vox_pipeline_pl \
+      sdp_dir=/path/to/NeMo-speech-data-processor
+
+# Base configuration paths
+data_dir: ???  # Required: Path to raw audio data
+output_dir: ???  # Required: Path where outputs will be saved
+sdp_dir: ???  # Required: Path to NeMo-speech-data-processor repo
+cache_dir: ${output_dir}/cache
+
+# Processing parameters
+params:
+  audio_channel: mic  # 'mic' for customer or 'spk' for employee
+  max_samples: 10  # Testing with 10 samples
+  source_lang: pl  # Polish
+  source_lang_full: Polish
+  min_audio_lid_probability: 0.7
+  min_audio_duration: 0.5  # seconds
+  max_audio_duration: 30  # seconds
+  use_regex: common  # Options: common, all
+  convert_to_audio_tarred_dataset:
+    should_run: false
+    num_shards: 1
+    buckets_num: 1
+  save_disk_space: false  # If true, removes intermediate files
+
+# Which processors to run
+processors_to_run: all
+
+# Use Dask for parallel processing
+use_dask: false  # Set to false to avoid import issues
+
+# Pipeline processors
+processors:
+  # ========== STAGE 0: Create initial manifest from Vox directory structure ==========
+  - _target_: sdp.processors.datasets.vox.create_initial_manifest.CreateInitialManifestVox
+    raw_data_dir: ${data_dir}
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_00.json
+    brand_code: bk  # Burger King
+    country_code: pl  # Poland
+    brand_name: Burger King
+    country_name: Poland
+    audio_type: ${params.audio_channel}  # mic or spk
+
+  # ========== STAGE 1: Create unique audio ID ==========
+  - _target_: sdp.processors.LambdaExpression
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_00.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_01.json
+    new_field: audio_id
+    expression: 'entry.device_id + "/" + entry.session_id + "/" + ("mic" if entry.audio_type == "customer" else "spk")'
+
+  # ========== STAGE 2: Limit samples for testing (optional) ==========
+  - _target_: sdp.processors.modify_manifest.limit_samples.LimitManifestEntries
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_01.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_02.json
+    max_entries: ${params.max_samples}
+
+  # ========== STAGE 3: Convert to 16kHz mono ==========
+  - _target_: sdp.processors.FfmpegConvert
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_02.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_03.json
+    input_file_key: audio_filepath
+    output_file_key: audio_filepath  
+    id_key: audio_id
+    converted_audio_dir: ${output_dir}/${params.source_lang}/converted_audio/
+    target_samplerate: 16000
+    target_nchannels: 1
+
+  # ========== STAGE 4: Get audio duration ==========
+  - _target_: sdp.processors.GetAudioDuration
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_03.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_04.json
+    audio_filepath_key: audio_filepath
+    duration_key: duration
+
+  # ========== STAGE 5: Language detection with Whisper ==========
+  - _target_: sdp.processors.FasterWhisperInference
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_04.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_05.json
+    model_size_or_path: large-v3
+    num_devices: -1  # Use all available GPUs
+    output_dir: ${output_dir}/${params.source_lang}/step_05
+    language_detection_only: true
+    inference:
+      language_detection_segments: 7
+      chunk_length: 30
+    save_timestamps_separately: false
+    skip_corrupted_audios: true
+
+  # ========== STAGE 6: Filter by language (Polish) ==========
+  - _target_: sdp.processors.LambdaExpression
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_05.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_06.json
+    new_field: lid_verified
+    expression: '(entry.language == "${params.source_lang}") & (entry.language_probability >= ${params.min_audio_lid_probability})'
+    filter: true
+
+  # ========== STAGE 7: Drop language detection fields ==========
+  - _target_: sdp.processors.DropSpecifiedFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_06.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_07.json
+    fields_to_drop:
+      - language
+      - language_probability
+      - lid_verified
+
+  # ========== STAGE 8: Full transcription with segments ==========
+  - _target_: sdp.processors.FasterWhisperInference
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_07.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_08.json
+    model_size_or_path: large-v3
+    output_dir: ${output_dir}/${params.source_lang}/step_08
+    num_devices: -1
+    inference:
+      language: ${params.source_lang}
+    save_timestamps_separately: false
+    skip_corrupted_audios: true
+
+  # ========== STAGE 9: Drop duration (will be recalculated per segment) ==========
+  - _target_: sdp.processors.DropSpecifiedFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_08.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_09.json
+    fields_to_drop:
+      - duration
+
+  # ========== STAGE 10: Convert segments list to individual entries ==========
+  - _target_: sdp.processors.ListToEntries
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_09.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_10.json
+    field_with_list: segments
+
+  # ========== STAGE 11: Keep only needed segment fields ==========
+  - _target_: sdp.processors.KeepOnlySpecifiedFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_10.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_11.json
+    fields_to_keep:
+      - audio_filepath
+      - id
+      - start
+      - end
+      - text
+      - language
+      - session_id
+      - device_id
+      - audio_type
+      - audio_id
+
+  # ========== STAGE 12: Calculate segment duration ==========
+  - _target_: sdp.processors.LambdaExpression
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_11.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_12.json
+    new_field: duration
+    expression: 'entry.end - entry.start'
+
+  # ========== STAGE 13: Filter by duration ==========
+  - _target_: sdp.processors.DropHighLowDuration
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_12.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_13.json
+    high_duration_threshold: ${params.max_audio_duration}
+    low_duration_threshold: ${params.min_audio_duration}
+
+  # ========== STAGE 14: Rename fields for segments ==========
+  - _target_: sdp.processors.RenameFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_13.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_14.json
+    rename_fields:
+      start: offset
+      id: segment_id
+      language: source_lang
+
+  # ========== STAGE 15: Keep core fields ==========
+  - _target_: sdp.processors.KeepOnlySpecifiedFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_14.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_15.json
+    fields_to_keep:
+      - source_lang
+      - audio_filepath
+      - segment_id
+      - offset
+      - duration
+      - session_id
+      - device_id
+      - audio_type
+      - audio_id
+
+  # ========== STAGE 16: Transcription by slice (more accurate for segments) ==========
+  - _target_: sdp.processors.FasterWhisperInference
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_15.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_16.json
+    model_size_or_path: large-v3
+    num_devices: -1
+    output_dir: ${output_dir}/${params.source_lang}/step_16
+    inference:
+      language: ${params.source_lang}
+    save_timestamps_separately: false
+    skip_corrupted_audios: true
+    slice_by_offset: true  # Use offset and duration to slice audio
+
+  # ========== STAGE 17: Keep transcription results ==========
+  - _target_: sdp.processors.KeepOnlySpecifiedFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_16.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_17.json
+    fields_to_keep:
+      - source_lang
+      - audio_filepath
+      - segment_id
+      - offset
+      - duration
+      - pred_text
+      - session_id
+      - device_id
+      - audio_type
+      - audio_id
+
+  # ========== STAGE 18: Rename pred_text to text ==========
+  - _target_: sdp.processors.RenameFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_17.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_18.json
+    rename_fields:
+      pred_text: text
+
+  # ========== STAGE 19: Drop empty transcriptions ==========
+  - _target_: sdp.processors.DropIfRegexMatch
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_18.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_19.json
+    text_key: text
+    regex_patterns:
+      - '^\s*$'  # Empty or whitespace-only
+
+  # ========== STAGE 20: Detect Whisper hallucinations ==========
+  - _target_: sdp.processors.DetectWhisperHallucinationFeatures
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_19.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_20.json
+    common_hall_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/common_phrases/${params.source_lang}.txt
+    text_field: text
+
+  # ========== STAGE 21: Filter hallucinated segments ==========
+  - _target_: sdp.processors.LambdaExpression
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_20.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_21.json
+    new_field: is_hallucinated
+    expression: '(not entry.hall_repeated_ngrams) & (not entry.hall_long_word) & (not entry.hall_frequent_single_word)'
+    filter: true
+
+  # ========== STAGE 22: Clean hallucination fields ==========
+  - _target_: sdp.processors.KeepOnlySpecifiedFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_21.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_22.json
+    fields_to_keep:
+      - source_lang
+      - audio_filepath
+      - segment_id
+      - offset
+      - duration
+      - text
+      - audio_type
+      - device_id
+      - session_id
+      - audio_id
+      
+  # ========== STAGE 23: Menu-Aware Correction (Fuzzy Matching - First Pass) ==========
+  # Initial menu item correction based on fuzzy matching for BK Poland
+  - _target_: sdp.processors.menu_aware_correction.MenuAwareCorrection
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_22.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_23.json
+    menu_vocabulary_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/bk_menu_vocabulary.json
+    text_field: text
+    corrected_field: text_menu_corrected
+    fuzzy_threshold: 80
+    context_window: 3
+    save_corrections: true
+
+  # ========== STAGE 24: Gemini Audio Correction (Listen to audio for spelling) ==========
+  # NOTE: Requires GEMINI_API_KEY environment variable
+  # This step listens to the actual audio to verify and correct menu item spellings ONLY
+  - _target_: sdp.processors.gemini_audio_correction.GeminiAudioCorrection
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_23.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_24.json
+    audio_filepath_field: audio_filepath
+    original_text_field: text_menu_corrected  # Use fuzzy-corrected text as input
+    corrected_text_field: gemini_corrected_text
+    confidence_field: gemini_confidence
+    correction_made_field: gemini_correction_made
+    offset_field: offset
+    duration_field: duration
+    prompt_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/gemini_audio_prompts/${params.source_lang}.yaml
+    model: gemini-2.5-pro
+    temperature: 0.1
+    max_workers: 10  # Parallel processing
+    requests_per_minute: 900  # Stay under API limit
+    api_key: ${oc.env:GEMINI_API_KEY, null}
+    save_errors: true
+    error_log_file: ${output_dir}/${params.source_lang}/gemini_errors.json
+
+  # ========== STAGE 25: Punctuation & Capitalization Restoration with Qwen ==========
+  # Fix capitalization and punctuation AFTER spelling corrections
+  - _target_: sdp.processors.vLLMInference
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_25.json
+    generation_field: src_text
+    prompt_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/pr_recovery_prompts/${params.source_lang}.yaml
+    model:
+      model: Qwen/Qwen3-8B
+      tensor_parallel_size: 1
+      max_model_len: 1024
+      enable_chunked_prefill: true
+      max_num_batched_tokens: 512
+      enforce_eager: true
+      dtype: float16
+      gpu_memory_utilization: 0.85
+      max_num_seqs: 4
+    inference:
+      temperature: 0.3
+      top_p: 0.8
+      top_k: 20
+      repetition_penalty: 1.05
+      max_tokens: 256
+    apply_chat_template:
+      tokenize: false
+      add_generation_prompt: true
+      enable_thinking: false
+
+  # ========== STAGE 26: Clean Qwen Generation Output ==========
+  - _target_: sdp.processors.CleanQwenGeneration
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_25.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_26.json
+    text_field: gemini_corrected_text  # Original text to keep
+    generation_field: src_text  # Qwen output to clean
+
+  # ========== STAGE 27: Text Normalization with Regex ==========
+  - _target_: sdp.processors.SubRegex
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_26.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_27.json
+    text_key: src_text  # Apply to Qwen-processed text
+    regex_params_yaml: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/subregex_params/${params.use_regex}.yaml
+
+  # ========== STAGE 28: Drop intermediate text fields ==========
+  - _target_: sdp.processors.DropSpecifiedFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_27.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_28.json
+    fields_to_drop:
+      - text
+      - text_menu_corrected
+      - menu_corrections
+      - num_corrections
+      - gemini_corrections
+      - gemini_corrected_text
+
+  # ========== STAGE 29: Rename final text field ==========
+  - _target_: sdp.processors.RenameFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_28.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_29.json
+    rename_fields:
+      src_text: text  # Final cleaned text
+      offset: source_audio_offset
+      
+  # ========== STAGE 30: Add constant metadata fields ==========
+  - _target_: sdp.processors.AddConstantFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_29.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_30.json
+    fields:
+      dataset: bk_pl_drive_thru
+      language: ${params.source_lang}
+    
+  # ========== STAGE 31: Final field selection ==========
+  - _target_: sdp.processors.flexible_field_keeper.FlexibleKeepFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_30.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_31.json
+    fields_to_keep:
+      - audio_filepath
+      - text
+      - duration
+      - source_audio_offset
+      - segment_id
+      - audio_type
+      - device_id
+      - session_id
+      - audio_id
+      - dataset
+      - language
+      - gemini_confidence
+      - gemini_correction_made
+
+  # ========== STAGE 32: Convert to WebDataset (TAR archives with wav/json pairs) ==========
+  - _target_: sdp.processors.convert_to_webdataset.ConvertToWebDataset
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_31.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_32.json
+    output_dir: ${output_dir}/${params.source_lang}/webdataset
+    shard_size: 100  # Files per shard
+    split: train
+    prefix: shard
+    shuffle: true
+    shuffle_seed: 42
+    slice_with_offset: true  # Extract audio segments
+    audio_type_field: audio_type  # Include in metadata
+    include_metadata: true

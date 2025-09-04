@@ -1,10 +1,28 @@
-Dziękuję 778
-Dzień dobry 299
-Kto jest za 131
-Dziękuję bardzo 121
-Kto się wstrzymał 114
-Sześć 91
-Kto przeciw 88
-Kompromis 13 88
-Kto jest przeciw 71
-Dziękuję za uwagę 55
+dziękuję
+proszę
+tak
+nie
+dobrze
+okej
+okay
+dzień dobry
+do widzenia
+cześć
+halo
+słucham
+przepraszam
+momencik
+chwileczkę
+poczekaj
+zaraz
+już
+teraz
+tutaj
+tam
+może
+chyba
+właśnie
+no
+eee
+yyy
+mmm

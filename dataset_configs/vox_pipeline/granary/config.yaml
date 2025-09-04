@@ -340,32 +340,44 @@ processors:
     context_window: 3
     save_corrections: True
   
-  # ========== STAGE 24b: LLM Menu Context Correction ==========
-  - _target_: sdp.processors.vLLMInference
+  # ========== STAGE 24b: LLM Menu Context Correction (COMMENTED OUT) ==========
+  # NOTE: Qwen LLM correction step commented out - using only Gemini audio-based correction
+  # - _target_: sdp.processors.vLLMInference
+  #   input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24a.json
+  #   output_manifest_file: ${output_dir}/${params.source_lang}/manifest_24b_raw.json
+  #   generation_field: text_llm_corrected
+  #   prompt_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/menu_correction_prompts/${params.source_lang}.yaml
+  #   model:
+  #     model: "Qwen/Qwen3-8B"
+  #     tensor_parallel_size: 1
+  #     max_model_len: 2048  # Increased for menu context
+  #     enable_chunked_prefill: True
+  #     max_num_batched_tokens: 1024  # Increased for context
+  #     enforce_eager: True
+  #     dtype: float16
+  #     gpu_memory_utilization: 0.90  # Slightly higher utilization
+  #     max_num_seqs: 2  # Smaller batch for better quality
+  #   inference:
+  #     temperature: 0.1  # Very low for consistent spelling corrections
+  #     top_p: 0.95  # High for coverage of menu vocabulary
+  #     top_k: 50  # Increased for menu vocabulary coverage
+  #     repetition_penalty: 1.0  # No penalty for consistent menu terms
+  #     max_tokens: 256
+  #   apply_chat_template:
+  #     tokenize: False
+  #     add_generation_prompt: True
+  #     enable_thinking: False
+  #   # Save intermediate outputs for debugging
+  #   save_outputs: True
+  #   output_dir: ${output_dir}/${params.source_lang}/llm_menu_corrections
+  
+  # ========== STAGE 24b2: Pass through manifest without LLM correction ==========
+  # Since we're skipping Qwen, just copy manifest_24a to manifest_24b
+  - _target_: sdp.processors.AddConstantFields
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24a.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_24b.json
-    generation_field: text_llm_corrected
-    prompt_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/menu_correction_prompts/${params.source_lang}.yaml
-    model:
-      model: "Qwen/Qwen3-8B"
-      tensor_parallel_size: 1
-      max_model_len: 2048  # Increased for menu context
-      enable_chunked_prefill: True
-      max_num_batched_tokens: 1024  # Increased for context
-      enforce_eager: True
-      dtype: float16
-      gpu_memory_utilization: 0.90  # Slightly higher utilization
-      max_num_seqs: 2  # Smaller batch for better quality
-    inference:
-      temperature: 0.2  # Lower for more consistent corrections
-      top_p: 0.9  # Higher for better coverage
-      top_k: 40  # Increased for menu vocabulary
-      repetition_penalty: 1.1  # Avoid repetitive corrections
-      max_tokens: 256
-    apply_chat_template:
-      tokenize: False
-      add_generation_prompt: True
-      enable_thinking: False
+    fields:
+      llm_correction_skipped: "true"  # Track that LLM correction was skipped
   
   # ========== STAGE 24c: Enhanced Cross-Channel Validation with Audio Bleeding Correction ==========
   # - _target_: sdp.processors.enhanced_cross_channel_validation.EnhancedCrossChannelValidation
@@ -383,11 +395,31 @@ processors:
   #   prefer_speaker_channel: True  # Prefer cleaner speaker channel
   #   min_speaker_duration: 1.0  # Minimum duration to use speaker channel
   
+  # ========== STAGE 24d: Gemini Audio Correction (Listen to audio for accurate corrections) ==========
+  # NOTE: Requires GEMINI_API_KEY environment variable or api_key parameter
+  # This step listens to the actual audio to verify and correct transcriptions
+  - _target_: sdp.processors.gemini_audio_correction.GeminiAudioCorrection
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24b.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_24d.json
+    audio_filepath_field: audio_filepath
+    original_text_field: text_menu_corrected  # Use fuzzy-matched text as input (since LLM is skipped)
+    corrected_text_field: gemini_corrected_text
+    confidence_field: gemini_confidence
+    correction_made_field: gemini_correction_made
+    offset_field: offset
+    duration_field: duration
+    prompt_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/gemini_audio_prompts/${params.source_lang}.yaml
+    model: gemini-2.5-pro  # Fast model for audio processing
+    temperature: 0.1  # Very low for consistent corrections
+    api_key: ${oc.env:GEMINI_API_KEY, null}  # Get from environment variable
+    save_errors: True
+    error_log_file: ${output_dir}/${params.source_lang}/gemini_errors.json
+  
   # ========== STAGE 25: Text Normalization with Regex ==========
   - _target_: sdp.processors.SubRegex
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24b.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24d.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_25.json
-    text_key: text_llm_corrected
+    text_key: gemini_corrected_text
     regex_params_yaml: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/subregex_params/${params.use_regex}.yaml
   
   # ========== STAGE 26: Drop intermediate text fields ==========
@@ -398,17 +430,18 @@ processors:
       - text
       - src_text
       - text_menu_corrected
-      # - text_llm_corrected  # Keep this as it's now our main text field
+      # - text_llm_corrected  # Not present since LLM step is commented out
       - menu_corrections
-      # - validation_metadata  # These fields won't exist without stage 24c
       - num_corrections  # Drop if exists
+      - gemini_corrections  # Drop detailed corrections list
+      - llm_correction_skipped  # Drop the flag we added
   
   # ========== STAGE 27: Rename cleaned text field ==========
   - _target_: sdp.processors.RenameFields
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_26.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_27.json
     rename_fields:
-      text_llm_corrected: text
+      gemini_corrected_text: text
       offset: source_audio_offset  # Rename for speech dataset processor
       
   # ========== STAGE 28: Add constant metadata fields ==========
@@ -435,6 +468,8 @@ processors:
       - audio_id
       - dataset
       - language
+      - gemini_confidence  # Confidence score from Gemini audio verification
+      - gemini_correction_made  # Whether Gemini made any corrections
       # - cross_channel_confidence  # Not available without stage 24c
       # - audio_bleeding_detected    # Not available without stage 24c
       # - correction_source          # Not available without stage 24c

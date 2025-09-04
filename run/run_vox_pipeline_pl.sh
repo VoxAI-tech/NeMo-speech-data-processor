@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# Run script for Vox Pipeline (Drive-thru Audio Processing)
-# This script processes El Jannah Australia drive-thru audio conversations
+# Run script for Vox Pipeline - Polish (Burger King Poland Drive-thru Audio Processing)
+# This script processes Burger King Poland drive-thru audio conversations
 
 # Set the paths
 SDP_DIR="/home/razhan/NeMo-speech-data-processor"
-DATA_DIR="${SDP_DIR}/data/audio"
-OUTPUT_DIR="${SDP_DIR}/outputs/vox_pipeline_$(date +%Y%m%d_%H%M%S)"
+DATA_DIR="${SDP_DIR}/data/audio"  # Base data directory (processor adds bk/pl)
+OUTPUT_DIR="${SDP_DIR}/outputs/vox_pipeline_pl_$(date +%Y%m%d_%H%M%S)"
 
 # GPU Configuration for vLLM
 export CUDA_VISIBLE_DEVICES=1  # Use GPU 1 for vLLM inference
@@ -14,8 +14,8 @@ export TOKENIZERS_PARALLELISM=false  # Avoid tokenizer warnings
 
 # Configuration parameters
 AUDIO_CHANNEL="mic"  # Change to "spk" for employee audio
-MAX_SAMPLES=50      # Testing with 10 samples (change to -1 for all samples)
-CONFIG_NAME="config_reordered.yaml"  # New reordered pipeline with Gemini before Qwen
+MAX_SAMPLES=100      # Process 100 samples to monitor errors
+CONFIG_NAME="config_pl.yaml"  # Polish pipeline configuration
 
 # Tar creation parameters
 CREATE_TAR=false     # Disabled for testing (set to true for production)
@@ -28,7 +28,7 @@ BATCH_SIZE=16        # Reduced for testing (increase to 32+ for production)
 USE_DASK=true        # Use Dask for distributed processing
 
 echo "======================================"
-echo "Vox Pipeline - Drive-thru Audio Processing"
+echo "Vox Pipeline - Burger King Poland Drive-thru Audio Processing"
 echo "======================================"
 echo "SDP Directory: ${SDP_DIR}"
 echo "Data Directory: ${DATA_DIR}"
@@ -78,15 +78,15 @@ echo ""
 echo "Processing Summary:"
 echo "-------------------"
 
-# Check for final manifest
-FINAL_MANIFEST="${OUTPUT_DIR}/en/manifest_30.json"
+# Check for final manifest (adjusted for Polish - pl instead of en)
+FINAL_MANIFEST="${OUTPUT_DIR}/pl/manifest_30.json"
 if [ -f "${FINAL_MANIFEST}" ]; then
     ENTRY_COUNT=$(wc -l < "${FINAL_MANIFEST}")
     echo "✓ Final manifest created with ${ENTRY_COUNT} entries"
     echo "  Location: ${FINAL_MANIFEST}"
 else
     # Check for last available manifest
-    LAST_MANIFEST=$(ls -1 ${OUTPUT_DIR}/en/manifest_*.json 2>/dev/null | sort -V | tail -1)
+    LAST_MANIFEST=$(ls -1 ${OUTPUT_DIR}/pl/manifest_*.json 2>/dev/null | sort -V | tail -1)
     if [ -n "${LAST_MANIFEST}" ]; then
         STAGE=$(basename "${LAST_MANIFEST}" | sed 's/manifest_\([0-9]*\).*/\1/')
         ENTRY_COUNT=$(wc -l < "${LAST_MANIFEST}")
@@ -125,4 +125,4 @@ if [ -f "${ERROR_LOG}" ]; then
 fi
 
 echo ""
-echo "======================================" 
+echo "======================================"

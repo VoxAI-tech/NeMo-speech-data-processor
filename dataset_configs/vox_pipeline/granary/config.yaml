@@ -50,7 +50,7 @@ params:
   
   # Audio duration settings (adjusted for drive-thru conversations)
   min_audio_duration: 0.5  # Shorter segments allowed
-  max_audio_duration: 120.0  # Drive-thru conversations can be longer
+  max_audio_duration: 30  # Drive-thru conversations can be longer
   
   # Text processing
   use_regex: common
@@ -149,6 +149,8 @@ processors:
     inference:
         language: ${params.source_lang}
     save_timestamps_separately: False
+
+
     skip_corrupted_audios: True
   
   # ========== STAGE 9: Drop duration before segment extraction ==========
@@ -366,26 +368,26 @@ processors:
       enable_thinking: False
   
   # ========== STAGE 24c: Enhanced Cross-Channel Validation with Audio Bleeding Correction ==========
-  - _target_: sdp.processors.enhanced_cross_channel_validation.EnhancedCrossChannelValidation
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_24c.json
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24b.json
-    speaker_manifest_file: ${output_dir}/${params.source_lang}/manifest_24b_spk.json  # Speaker channel manifest
-    text_field: text_llm_corrected
-    validated_field: text_validated
-    confidence_field: cross_channel_confidence
-    bleeding_field: audio_bleeding_detected
-    correction_source_field: correction_source
-    similarity_threshold: 0.7
-    bleeding_detection_threshold: 0.8  # Threshold for detecting audio bleeding
-    time_tolerance: 0.5  # 500ms tolerance for timestamp matching
-    prefer_speaker_channel: True  # Prefer cleaner speaker channel
-    min_speaker_duration: 1.0  # Minimum duration to use speaker channel
+  # - _target_: sdp.processors.enhanced_cross_channel_validation.EnhancedCrossChannelValidation
+  #   output_manifest_file: ${output_dir}/${params.source_lang}/manifest_24c.json
+  #   input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24b.json
+  #   speaker_manifest_file: ${output_dir}/${params.source_lang}/manifest_24b_spk.json  # Speaker channel manifest
+  #   text_field: text_llm_corrected
+  #   validated_field: text_validated
+  #   confidence_field: cross_channel_confidence
+  #   bleeding_field: audio_bleeding_detected
+  #   correction_source_field: correction_source
+  #   similarity_threshold: 0.7
+  #   bleeding_detection_threshold: 0.8  # Threshold for detecting audio bleeding
+  #   time_tolerance: 0.5  # 500ms tolerance for timestamp matching
+  #   prefer_speaker_channel: True  # Prefer cleaner speaker channel
+  #   min_speaker_duration: 1.0  # Minimum duration to use speaker channel
   
   # ========== STAGE 25: Text Normalization with Regex ==========
   - _target_: sdp.processors.SubRegex
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24c.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24b.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_25.json
-    text_key: text_validated
+    text_key: text_llm_corrected
     regex_params_yaml: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/subregex_params/${params.use_regex}.yaml
   
   # ========== STAGE 26: Drop intermediate text fields ==========
@@ -396,9 +398,9 @@ processors:
       - text
       - src_text
       - text_menu_corrected
-      - text_llm_corrected
+      # - text_llm_corrected  # Keep this as it's now our main text field
       - menu_corrections
-      - validation_metadata
+      # - validation_metadata  # These fields won't exist without stage 24c
       - num_corrections  # Drop if exists
   
   # ========== STAGE 27: Rename cleaned text field ==========
@@ -406,7 +408,7 @@ processors:
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_26.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_27.json
     rename_fields:
-      text_validated: text
+      text_llm_corrected: text
       offset: source_audio_offset  # Rename for speech dataset processor
       
   # ========== STAGE 28: Add constant metadata fields ==========
@@ -433,9 +435,9 @@ processors:
       - audio_id
       - dataset
       - language
-      - cross_channel_confidence
-      - audio_bleeding_detected
-      - correction_source
+      # - cross_channel_confidence  # Not available without stage 24c
+      # - audio_bleeding_detected    # Not available without stage 24c
+      # - correction_source          # Not available without stage 24c
   
   # ========== STAGE 30: Convert to WebDataset (TAR archives with wav/json pairs) ==========
   - _target_: sdp.processors.convert_to_webdataset.ConvertToWebDataset

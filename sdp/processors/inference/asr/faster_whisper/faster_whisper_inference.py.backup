@@ -67,11 +67,6 @@ class InferenceConfig:
     Configuration for FasterWhisper inference.
     To know more about the parameters, refer to the documentation:
         https://github.com/SYSTRAN/faster-whisper/blob/master/faster_whisper/transcribe.py#L303
-    
-    IMPORTANT: Updated settings to properly return multiple segments per audio:
-    - without_timestamps: False (was True) - enables proper segmentation
-    - word_timestamps: False (unchanged) - word-level timing not needed
-    This change fixes the issue where all audios returned only a single segment.
     """
     language: Optional[str] = None
     task: str = "transcribe"
@@ -92,9 +87,9 @@ class InferenceConfig:
     prefix: Optional[str] = None
     suppress_blank: bool = True
     suppress_tokens: Optional[List[int]] = field(default_factory=lambda: [-1])
-    without_timestamps: bool = False  # Changed to False to enable proper segmentation
+    without_timestamps: bool = True
     max_initial_timestamp: float = 1.0
-    word_timestamps: bool = False  # Keep as False - word timestamps not needed
+    word_timestamps: bool = False
     prepend_punctuations: str = "\"'“¿([{-"
     append_punctuations: str = "\"'.。,，!！?？:：”)]}、"
     multilingual: bool = True

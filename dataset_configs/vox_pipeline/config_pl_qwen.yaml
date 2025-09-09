@@ -306,7 +306,7 @@ processors:
   - _target_: sdp.processors.menu_aware_correction.MenuAwareCorrection
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_22.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_23.json
-    menu_vocabulary_file: ${sdp_dir}/dataset_configs/vox_pipeline/bk_menu_vocabulary.json
+    menu_vocabulary_file: ${sdp_dir}/dataset_configs/vox_pipeline/assets/vocabularies/bk_menu_vocabulary.json
     text_field: text
     corrected_field: text_menu_corrected
     fuzzy_threshold: 80

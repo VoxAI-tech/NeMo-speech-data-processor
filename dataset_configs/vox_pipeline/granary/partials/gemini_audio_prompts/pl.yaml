@@ -12,8 +12,35 @@ system: |
   6. ONLY fix clear Whisper errors where the word is completely wrong
   7. Common Polish fillers to KEEP: "y", "eee", "no", "więc", "tak", "to", "tego", "jakby", "właśnie"
   
+  PRIORITY CHECKS FOR POLISH MODEL (VoxAI/whisper-large-v3-polish-ct2) ERRORS:
+  
+  🚨 CRITICAL EMPTY OUTPUT CASES:
+  - If Whisper returns EMPTY/BLANK, ALWAYS listen carefully - often contains important speech
+  - Verified missed utterances: "kupon dziewiąty", "tak", "nie", "to wszystko", "wszystko", "dobra"
+  - Short service phrases often missed: "momencik", "chwileczkę", "proszę chwileczkę poczekać"
+  - Polish model specifically fails on: "tak?" (returns empty), "to wszystko" (returns empty)
+  
+  🚨 HALLUCINATION DETECTION:
+  - When Whisper output is MUCH LONGER than expected for short audio, verify actual content
+  - Common hallucinations: "Wielkie dzięki i do zobaczenia w kolejnych odcinkach" for simple greetings
+  - "Dzień dobry, co się dzieje?" when audio says "kupon dziewiąty"
+  
+  🚨 MOST COMMONLY MISSED WORDS (verified errors):
+  - "dobry" (in greetings) - missed 7x in analysis
+  - "jeszcze" + "chwilkę" (service phrases) - missed 5x each
+  - "wieczór" (in "dobry wieczór") - missed 5x  
+  - "proszę" (polite requests) - missed 3x
+  
+  🚨 COMMON SUBSTITUTION PATTERNS (Polish model specific):
+  - "słucham zamówienia" → "słucham zamówienia?" (adds incorrect question mark)
+  - "tak" → "dobra" (replaces yes with okay)
+  - "z kurczakiem" → "kurczakiem" (drops preposition "z")
+  - "dzień dobry, już sekundka" → "proszę sekundkę" (changes greeting)
+  - Menu items: "whopper junior" → "uper junior" or "whooper junior" (misspelling)
+  - "sir bekon burger" → "sir bacon burger" (anglicizes Polish spelling)
+  
   MENU VOCABULARY FOR REFERENCE:
-  Burgers: Whopper, Big King, Bacon King, Steakhouse, Cheeseburger
+  Burgers: Whopper, Big King, Bacon King, Bekon King Junior, Steakhouse, Cheeseburger
   Chicken: Crispy Chicken, Chicken Nuggets, King Wings  
   Sides: frytki (fries), sałatka (salad)
   Drinks: Pepsi, Cola, woda (water), sok (juice)
@@ -22,7 +49,7 @@ system: |
   
   EXAMPLES OF WHAT TO KEEP AS-IS:
   - "Whoppera" → keep as "Whoppera" (pronunciation variation)
-  - "Woppera" → keep as "Woppera" (how they said it)
+  - "Woppera" → keep as "Whoppera" (how they said it)
   - "frytki" → keep as "frytki" (correct)
   
   ONLY FIX CLEAR ERRORS:
@@ -36,6 +63,6 @@ user: |
   ORIGINAL TRANSCRIPTION:
   {original_text}
   
-  IMPORTANT: Keep pronunciation variations like "Whoppera", "Woppera" exactly as spoken.
+  IMPORTANT: Keep pronunciation variations like "Whoppera", "Whoppera" exactly as spoken.
   Do NOT standardize to "Whopper" if they said it with Polish pronunciation.
   Return the text EXACTLY as spoken, only fixing clear transcription mistakes.

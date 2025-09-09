@@ -1,0 +1,257 @@
+# Polish Whisper Model (VoxAI/whisper-large-v3-polish-ct2) Error Corrections
+# Based on evaluation showing specific error patterns that need correction
+
+# ============================================================================
+# FUZZY MATCHING CORRECTIONS FOR MENU ITEMS
+# ============================================================================
+
+fuzzy_matching_corrections:
+  # Common menu item errors from Polish model
+  menu_corrections:
+    # Whopper variants
+    "uper junior": "whopper junior"
+    "whooper junior": "whopper junior"
+    "woper junior": "whopper junior"
+    "łoper junior": "whopper junior"
+    
+    # Bacon burger variants  
+    "sir bacon burger": "sir bekon burger"
+    "ser bacon burger": "sir bekon burger"
+    "sir bejkon burger": "sir bekon burger"
+    
+    # Bao burger variants
+    "pop burgera": "bao burgera"
+    "pao burgera": "bao burgera"
+    "bał burgera": "bao burgera"
+    
+    # Wrap variants
+    "klasyczne": "klasyczny"
+    "barbecue": "bbq"
+    "barbikiu": "bbq"
+    
+  # Size corrections
+  size_corrections:
+    "duże": "duży"
+    "małe": "mały"
+    "średnie": "średni"
+
+# ============================================================================
+# GEMINI AUDIO VERIFICATION PROMPTS FOR POLISH ERRORS
+# ============================================================================
+
+gemini_prompts:
+  # Focus on common Polish model errors
+  verification_prompt: |
+    Listen to this Polish drive-thru audio and verify the transcription.
+    The Whisper model (VoxAI/whisper-large-v3-polish-ct2) commonly makes these errors:
+    
+    1. SHORT UTTERANCES: Often drops or misses short phrases like:
+       - "tak" (yes) → sometimes transcribed as "dobra" or empty
+       - "to wszystko" (that's all) → often completely missed
+       - "z kurczakiem" → drops the "z" preposition
+    
+    2. MENU ITEMS: May misspell brand names:
+       - "whopper" → "uper", "whooper", "woper"
+       - "sir bekon" → "sir bacon", "ser bacon"
+       - "bao burger" → "pop burger", "pao burger"
+    
+    3. SERVICE PHRASES: Sometimes adds or changes punctuation:
+       - Statements become questions: "słucham zamówienia" → "słucham zamówienia?"
+       - Drops diminutives: "chwileczkę" → "chwilkę"
+    
+    4. GREETINGS: May miss or alter:
+       - "dzień dobry" sometimes dropped entirely
+       - "już sekundka" → "proszę sekundkę"
+    
+    Current transcription: {transcription}
+    
+    Please provide the correct transcription, paying special attention to:
+    - Short utterances (tak, nie, to wszystko)
+    - Prepositions (z, w, na)
+    - Menu item names (use Polish spelling)
+    - Service phrases with proper diminutives
+    
+    Return ONLY the corrected transcription in Polish.
+
+  # Specific error recovery prompt
+  error_recovery_prompt: |
+    The Polish Whisper model failed to transcribe this audio (empty output).
+    Common causes for Polish model failures:
+    - Very short utterances (< 1 second)
+    - Overlapping speech
+    - Background noise from kitchen/drive-thru
+    
+    Listen carefully and transcribe what you hear.
+    If you hear:
+    - Confirmation words (tak, nie, dobra, okej)
+    - Closing phrases (to wszystko, dziękuję)
+    - Short questions (co jeszcze?, coś jeszcze?)
+    
+    Return the Polish transcription or "[nieczytelne]" if truly unintelligible.
+
+# ============================================================================
+# QWEN PUNCTUATION/CAPITALIZATION CORRECTIONS
+# ============================================================================
+
+qwen_corrections:
+  # Polish-specific punctuation patterns
+  punctuation_rules:
+    # Questions that Polish model often marks incorrectly
+    - pattern: "słucham zamówienia\\?"
+      replacement: "słucham zamówienia"
+      note: "Statement, not question"
+    
+    - pattern: "tak\\."
+      replacement: "tak"
+      note: "Remove period from single word"
+    
+    - pattern: "dobra\\."
+      replacement: "dobra"
+      note: "Remove period from single word"
+    
+    # Add question marks where missing
+    - pattern: "(w zestawie|sam|sama|same)$"
+      replacement: "\\1?"
+      note: "Add question mark to order queries"
+    
+    - pattern: "(coś jeszcze|co jeszcze)$"
+      replacement: "\\1?"
+      note: "Add question mark to service questions"
+  
+  # Capitalization corrections
+  capitalization_rules:
+    # Menu items that should stay lowercase in Polish
+    - "Whopper Junior": "whopper junior"
+    - "Sir Bekon Burger": "sir bekon burger"
+    - "Bao Burger": "bao burger"
+    
+    # Proper capitalization for places
+    - "burger king": "Burger King"
+    - "burger King": "Burger King"
+
+  # Context-aware corrections
+  context_corrections:
+    # When "dobra" appears alone, likely meant "tak"
+    - condition: "single_word"
+      original: "dobra"
+      context: "after_question"
+      replacement: "tak"
+    
+    # When "kurczakiem" appears alone, likely meant "z kurczakiem"
+    - condition: "single_word"
+      original: "kurczakiem"
+      context: "menu_choice"
+      replacement: "z kurczakiem"
+
+# ============================================================================
+# POST-PROCESSING REGEX PATTERNS
+# ============================================================================
+
+post_processing:
+  # Fix common Polish model transcription patterns
+  regex_corrections:
+    # Remove trailing periods from single words
+    - pattern: "^(tak|nie|dobra|okej|dobrze)\\.$"
+      replacement: "\\1"
+      flags: "IGNORECASE"
+    
+    # Fix preposition drops
+    - pattern: "\\b(kurczakiem|wołowiną|serem|bekonem)\\b"
+      replacement: "z \\1"
+      condition: "start_of_utterance"
+    
+    # Standardize menu items
+    - pattern: "\\b(uper|whooper|woper)\\s+junior\\b"
+      replacement: "whopper junior"
+      flags: "IGNORECASE"
+    
+    - pattern: "\\bsir\\s+bacon\\s+burger\\b"
+      replacement: "sir bekon burger"
+      flags: "IGNORECASE"
+    
+    # Fix question mark additions
+    - pattern: "(słucham.*zamówienia)\\?"
+      replacement: "\\1"
+    
+    # Standardize service phrases
+    - pattern: "proszę\\s+sekundkę"
+      replacement: "już sekundka"
+    
+    - pattern: "chwilkę"
+      replacement: "chwileczkę"
+      condition: "in_phrase:proszę_poczekać"
+
+# ============================================================================
+# CONFIDENCE THRESHOLDS
+# ============================================================================
+
+confidence_settings:
+  # Lower confidence for known problem patterns
+  low_confidence_triggers:
+    - "utterance_length < 2 words"
+    - "contains: dobra (as single word)"
+    - "contains: kurczakiem (as single word)"
+    - "empty_output"
+    - "single_word_response_to_question"
+  
+  # Require higher confidence for acceptance
+  min_confidence_scores:
+    default: 0.7
+    short_utterance: 0.8  # < 3 words
+    single_word: 0.85
+    menu_item: 0.75
+    greeting: 0.8
+
+# ============================================================================
+# SPECIAL HANDLING RULES
+# ============================================================================
+
+special_rules:
+  # Empty output recovery
+  empty_output_handling:
+    # Common phrases when Polish model returns empty
+    likely_phrases:
+      - "tak"
+      - "nie"
+      - "to wszystko"
+      - "dziękuję"
+      - "dzień dobry"
+      - "dobry wieczór"
+    
+    # Use context to guess
+    context_based_recovery:
+      after_menu_question: "tak"
+      after_order_complete: "to wszystko"
+      conversation_start: "dzień dobry"
+  
+  # Hallucination detection
+  hallucination_patterns:
+    - "Contains English words in Polish context"
+    - "Mentions items not on Polish BK menu"
+    - "Response doesn't match question context"
+    - "Unusually formal language for drive-thru"
+
+# ============================================================================
+# INTEGRATION INSTRUCTIONS
+# ============================================================================
+
+integration:
+  pipeline_order:
+    1: "Whisper transcription (Polish model)"
+    2: "Fuzzy matching for menu items"
+    3: "Gemini audio verification (if low confidence)"
+    4: "Qwen punctuation/capitalization"
+    5: "Post-processing regex"
+    6: "Final validation"
+  
+  when_to_apply:
+    fuzzy_matching: "Always for menu items"
+    gemini_verification: "WER > 0.3 or empty output"
+    qwen_correction: "All transcriptions"
+    post_processing: "All transcriptions"
+  
+  notes:
+    - "Polish model is better at Polish but makes consistent errors"
+    - "Short utterances need special attention"
+    - "Menu items often need correction"
+    - "Punctuation tends to be added incorrectly"

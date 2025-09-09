@@ -15,7 +15,7 @@ documentation: |
     2. Then run this config pointing to Qwen's output directory
     
     python main.py \
-      --config-path dataset_configs/vox_pipeline/granary/ \
+      --config-path dataset_configs/vox_pipeline/ \
       --config-name config_pl_gemini_from_qwen.yaml \
       data_dir=data/audio \
       qwen_output_dir=outputs/vox_pipeline_pl_qwen_test \
@@ -28,6 +28,10 @@ qwen_output_dir: ???  # Required: Path to Qwen pipeline output (for reusing mani
 output_dir: ???  # Required: Path where Gemini outputs will be saved
 sdp_dir: ???  # Required: Path to NeMo-speech-data-processor repo
 cache_dir: ${output_dir}/cache
+
+# Brand and country configuration
+brand: bk  # Burger King
+country: pl  # Poland
 
 # Processing parameters
 params:
@@ -68,7 +72,7 @@ processors:
     correction_made_field: gemini_correction_made
     offset_field: offset
     duration_field: duration
-    prompt_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/gemini_audio_prompts/${params.source_lang}.yaml
+    prompt_file: ${sdp_dir}/dataset_configs/vox_pipeline/partials/gemini_audio_prompts/${params.source_lang}.yaml
     model: gemini-2.5-pro  # Tier 1 limits: 150 RPM, 10,000 RPD
     temperature: 0.1
     max_workers: 5  # Optimal for 150 RPM (2.5 req/sec) to handle processing time
@@ -86,7 +90,7 @@ processors:
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_25.json
     generation_field: src_text
-    prompt_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/pr_recovery_prompts/${params.source_lang}.yaml
+    prompt_file: ${sdp_dir}/dataset_configs/vox_pipeline/partials/pr_recovery_prompts/${params.source_lang}.yaml
     model:
       model: Qwen/Qwen3-8B
       tensor_parallel_size: 1
@@ -120,7 +124,7 @@ processors:
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_26.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_27.json
     text_key: src_text  # Apply to Qwen-processed text
-    regex_params_yaml: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/subregex_params/${params.use_regex}.yaml
+    regex_params_yaml: ${sdp_dir}/dataset_configs/vox_pipeline/partials/subregex_params/${params.use_regex}.yaml
 
   # ========== STAGE 28: Drop intermediate text fields ==========
   - _target_: sdp.processors.DropSpecifiedFields
@@ -147,7 +151,7 @@ processors:
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_29.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_30.json
     fields:
-      dataset: bk_pl_drive_thru
+      dataset: ${brand}_${country}_drive_thru
       language: ${params.source_lang}
     
   # ========== STAGE 31: Final field selection ==========

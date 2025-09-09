@@ -11,6 +11,7 @@ dependencies = [
     "faster-whisper>=1.2.0",
     "fasttext>=0.9.3",
     "gdown>=5.2.0",
+    "google-genai>=1.33.0",
     "gradio>=5.44.1",
     "jiwer>=4.0.0",
     "lhotse>=1.30.3",
@@ -28,6 +29,8 @@ dependencies = [
     "rarfile>=4.2",
     "sox>=1.5.0",
     "termplotlib>=0.3.9",
+    "torchaudio>=2.7.1",
+    "torchcodec>=0.6.0",
     "vllm>=0.10.1.1",
     "webvtt-py>=0.5.1",
 ]

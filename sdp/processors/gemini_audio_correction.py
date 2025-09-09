@@ -65,6 +65,8 @@ class GeminiAudioCorrection(BaseParallelProcessor):
         requests_per_minute: int = 900,  # Stay under 1000 RPM limit
         save_errors: bool = True,
         error_log_file: Optional[str] = None,
+        cache_dir: Optional[str] = None,  # Directory to cache processed entries
+        use_cache: bool = True,  # Whether to use cached results
         **kwargs
     ):
         super().__init__(
@@ -90,6 +92,23 @@ class GeminiAudioCorrection(BaseParallelProcessor):
         self.prompt_file = prompt_file
         self.max_workers = max_workers
         self.requests_per_minute = requests_per_minute
+        self.use_cache = use_cache
+        
+        # Set up cache directory
+        if cache_dir:
+            self.cache_dir = cache_dir
+        else:
+            output_dir = os.path.dirname(output_manifest_file)
+            self.cache_dir = os.path.join(output_dir, "gemini_cache")
+        
+        # Create cache directory if it doesn't exist
+        if self.use_cache:
+            os.makedirs(self.cache_dir, exist_ok=True)
+            self.cache_file = os.path.join(self.cache_dir, "processed_entries.json")
+            self.cached_entries = self.load_cache()
+            logger.info(f"Cache enabled. Found {len(self.cached_entries)} cached entries.")
+        else:
+            self.cached_entries = {}
         
         # Rate limiting setup
         self.rate_limiter = Semaphore(max_workers)  # Limit concurrent requests
@@ -129,9 +148,74 @@ class GeminiAudioCorrection(BaseParallelProcessor):
             "total_processed": 0,
             "corrections_made": 0,
             "errors": 0,
-            "api_calls": 0
+            "api_calls": 0,
+            "cached_used": 0
         }
         self.stats_lock = Semaphore(1)  # Thread-safe access to stats
+    
+    def load_cache(self) -> Dict[str, Any]:
+        """Load cached entries from disk or from existing manifest if available."""
+        cached_entries = {}
+        
+        # First try to load from cache file
+        if os.path.exists(self.cache_file):
+            try:
+                with open(self.cache_file, 'r') as f:
+                    cache_data = json.load(f)
+                    logger.info(f"Loaded cache from {self.cache_file}")
+                    return cache_data
+            except Exception as e:
+                logger.warning(f"Failed to load cache file: {e}")
+        
+        # If output manifest already exists, load processed entries from it
+        if os.path.exists(self.output_manifest_file):
+            try:
+                logger.info(f"Found existing output manifest: {self.output_manifest_file}")
+                logger.info("Loading processed entries as cache...")
+                with open(self.output_manifest_file, 'r') as f:
+                    for line in f:
+                        entry = json.loads(line)
+                        # Check if this entry has Gemini corrections
+                        if self.corrected_text_field in entry and self.confidence_field in entry:
+                            cache_key = self.get_cache_key(entry)
+                            cached_entries[cache_key] = {
+                                "corrected_text": entry[self.corrected_text_field],
+                                "confidence": entry[self.confidence_field],
+                                "correction_made": entry.get(self.correction_made_field, False),
+                                "corrections_made": entry.get("gemini_corrections", [])
+                            }
+                logger.info(f"Loaded {len(cached_entries)} processed entries from existing manifest")
+                # Save to cache file for faster loading next time
+                if cached_entries:
+                    try:
+                        with open(self.cache_file, 'w') as f:
+                            json.dump(cached_entries, f, indent=2)
+                        logger.info(f"Saved loaded entries to cache file for faster access")
+                    except Exception as e:
+                        logger.warning(f"Failed to save cache file: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to load from existing manifest: {e}")
+        
+        return cached_entries
+    
+    def save_cache(self):
+        """Save cached entries to disk."""
+        if self.use_cache:
+            try:
+                with open(self.cache_file, 'w') as f:
+                    json.dump(self.cached_entries, f, indent=2)
+                logger.info(f"Saved {len(self.cached_entries)} entries to cache")
+            except Exception as e:
+                logger.error(f"Failed to save cache: {e}")
+    
+    def get_cache_key(self, entry: Dict[str, Any]) -> str:
+        """Generate a unique cache key for an entry."""
+        # Use audio filepath and segment_id for unique identification
+        audio_path = entry.get(self.audio_filepath_field, "")
+        segment_id = entry.get("segment_id", entry.get("id", ""))
+        offset = entry.get(self.offset_field, 0)
+        # Create a unique key combining filepath, segment, and offset
+        return f"{audio_path}|{segment_id}|{offset}"
     
     def build_correction_prompt(self, original_transcription: str) -> str:
         """
@@ -237,6 +321,7 @@ If no corrections are needed, return the original text with an empty corrections
     def wait_for_rate_limit(self):
         """
         Ensure we don't exceed the rate limit (RPM).
+        Optimized for 150 RPM = 2.5 requests per second.
         """
         with self.rpm_lock:
             now = datetime.now()
@@ -249,7 +334,9 @@ If no corrections are needed, return the original text with an empty corrections
                 oldest_request = self.request_times[0]
                 wait_time = (oldest_request + timedelta(minutes=1) - now).total_seconds()
                 if wait_time > 0:
-                    logger.info(f"Rate limit reached, waiting {wait_time:.1f} seconds...")
+                    # Only log if wait time is significant
+                    if wait_time > 1.0:
+                        logger.info(f"Rate limit reached ({len(self.request_times)}/{self.requests_per_minute}), waiting {wait_time:.1f} seconds...")
                     time.sleep(wait_time)
                     # Clean up old requests again
                     now = datetime.now()
@@ -337,6 +424,26 @@ If no corrections are needed, return the original text with an empty corrections
         with self.stats_lock:
             self.stats["total_processed"] += 1
         
+        # Check cache first if enabled
+        if self.use_cache:
+            cache_key = self.get_cache_key(entry)
+            if cache_key in self.cached_entries:
+                cached_result = self.cached_entries[cache_key]
+                # Apply cached results to entry
+                entry[self.corrected_text_field] = cached_result.get("corrected_text", entry.get(self.original_text_field, ""))
+                entry[self.confidence_field] = cached_result.get("confidence", 0.0)
+                entry[self.correction_made_field] = cached_result.get("correction_made", False)
+                if cached_result.get("corrections_made"):
+                    entry["gemini_corrections"] = cached_result["corrections_made"]
+                
+                with self.stats_lock:
+                    self.stats["cached_used"] += 1
+                    if entry[self.correction_made_field]:
+                        self.stats["corrections_made"] += 1
+                
+                logger.debug(f"Using cached result for segment {entry.get('segment_id', 'unknown')}")
+                return entry
+        
         # Get required fields
         audio_filepath = entry.get(self.audio_filepath_field)
         original_text = entry.get(self.original_text_field, "")
@@ -371,6 +478,19 @@ If no corrections are needed, return the original text with an empty corrections
                 # Add correction details if any
                 if result.get("corrections_made"):
                     entry["gemini_corrections"] = result["corrections_made"]
+                
+                # Cache the successful result
+                if self.use_cache and "error" not in result:
+                    cache_key = self.get_cache_key(entry)
+                    self.cached_entries[cache_key] = {
+                        "corrected_text": corrected_text,
+                        "confidence": entry[self.confidence_field],
+                        "correction_made": entry[self.correction_made_field],
+                        "corrections_made": result.get("corrections_made", [])
+                    }
+                    # Save cache periodically (every 100 entries)
+                    if len(self.cached_entries) % 100 == 0:
+                        self.save_cache()
                 
                 if entry[self.correction_made_field]:
                     with self.stats_lock:
@@ -467,12 +587,19 @@ If no corrections are needed, return the original text with an empty corrections
                     if completed % 10 == 0 or completed == total_entries:
                         elapsed = time.time() - start_time
                         rate = completed / elapsed if elapsed > 0 else 0
+                        rpm = rate * 60  # Requests per minute
                         eta = (total_entries - completed) / rate if rate > 0 else 0
+                        
+                        # Calculate actual API calls vs cached
+                        api_calls = self.stats.get('api_calls', 0)
+                        cached = self.stats.get('cached_used', 0)
+                        
                         logger.info(
                             f"Progress: {completed}/{total_entries} "
-                            f"({completed/total_entries*100:.1f}%) "
-                            f"Rate: {rate:.1f}/s "
-                            f"ETA: {eta:.0f}s"
+                            f"({completed/total_entries*100:.1f}%) | "
+                            f"Rate: {rate:.1f}/s ({rpm:.0f} RPM) | "
+                            f"API: {api_calls} Cached: {cached} | "
+                            f"ETA: {eta/60:.0f}m {eta%60:.0f}s"
                         )
                 except Exception as e:
                     logger.error(f"Error processing entry {index}: {e}")
@@ -485,6 +612,10 @@ If no corrections are needed, return the original text with an empty corrections
                 if entry:  # Skip None entries (shouldn't happen)
                     f.write(json.dumps(entry) + "\n")
         
+        # Save cache at the end
+        if self.use_cache:
+            self.save_cache()
+        
         # Calculate final statistics
         elapsed_time = time.time() - start_time
         
@@ -496,9 +627,14 @@ If no corrections are needed, return the original text with an empty corrections
                    f"({self.stats['corrections_made']/max(1, self.stats['total_processed'])*100:.1f}%)")
         logger.info(f"  Errors: {self.stats['errors']}")
         logger.info(f"  API calls: {self.stats['api_calls']}")
+        logger.info(f"  Cached results used: {self.stats['cached_used']}")
         logger.info(f"  Processing time: {elapsed_time:.1f}s")
         logger.info(f"  Average speed: {total_entries/elapsed_time:.1f} entries/second")
         logger.info("="*60)
+        
+        if self.use_cache:
+            logger.info(f"Cache saved to: {self.cache_file}")
+            logger.info(f"Total cached entries: {len(self.cached_entries)}")
         
         if self.save_errors and self.stats["errors"] > 0:
             logger.info(f"Error details saved to: {self.error_log_file}")

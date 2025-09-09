@@ -75,7 +75,7 @@ processors:
     country_code: "au"
     brand_name: "El Jannah"
     country_name: "Australia"
-    audio_type: ${params.audio_channel}  # 'mic' or 'spk'
+    speaker: ${params.audio_channel}  # 'mic' or 'spk'
 
   # ========== STAGE 1: Add unique audio ID for file naming ==========
   - _target_: sdp.processors.LambdaExpression
@@ -485,7 +485,7 @@ processors:
     shuffle: True  # Shuffle samples before sharding
     shuffle_seed: 42
     slice_with_offset: True  # Extract segments using offset/duration
-    audio_type_field: audio_type
+    speaker_field: speaker
     include_metadata: True  # Include all metadata in JSON files
     
   # ========== STAGE 31: Convert to Tarred Audio Dataset (Optional) ==========

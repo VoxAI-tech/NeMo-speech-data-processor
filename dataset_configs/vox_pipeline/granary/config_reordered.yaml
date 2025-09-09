@@ -72,7 +72,7 @@ processors:
     country_code: au  # Australia
     brand_name: El Jannah
     country_name: Australia
-    audio_type: ${params.audio_channel}  # mic or spk
+    speaker: ${params.audio_channel}  # mic or spk
 
   # ========== STAGE 1: Create unique audio ID ==========
   - _target_: sdp.processors.LambdaExpression
@@ -424,5 +424,5 @@ processors:
     shuffle: true
     shuffle_seed: 42
     slice_with_offset: true  # Extract audio segments
-    audio_type_field: audio_type  # Include in metadata
+    speaker_field: speaker  # Include in metadata
     include_metadata: true

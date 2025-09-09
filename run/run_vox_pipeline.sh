@@ -6,7 +6,10 @@
 # Set the paths
 SDP_DIR="/home/razhan/NeMo-speech-data-processor"
 DATA_DIR="${SDP_DIR}/data/audio"
-OUTPUT_DIR="${SDP_DIR}/outputs/vox_pipeline_$(date +%Y%m%d_%H%M%S)"
+BRAND="ej"  # El Jannah
+COUNTRY="au"  # Australia
+CUTOFF_DATE=$(date +%Y%m%d)  # Today's date
+OUTPUT_DIR="${SDP_DIR}/outputs/${BRAND}-${COUNTRY}-${CUTOFF_DATE}_$(date +%H%M%S)"
 
 # GPU Configuration for vLLM
 export CUDA_VISIBLE_DEVICES=1  # Use GPU 1 for vLLM inference
@@ -15,7 +18,7 @@ export TOKENIZERS_PARALLELISM=false  # Avoid tokenizer warnings
 # Configuration parameters
 AUDIO_CHANNEL="mic"  # Change to "spk" for employee audio
 MAX_SAMPLES=50      # Testing with 10 samples (change to -1 for all samples)
-CONFIG_NAME="config_reordered.yaml"  # New reordered pipeline with Gemini before Qwen
+CONFIG_NAME="config.yaml"  # El Jannah Australia pipeline
 
 # Tar creation parameters
 CREATE_TAR=false     # Disabled for testing (set to true for production)
@@ -47,7 +50,7 @@ mkdir -p ${OUTPUT_DIR}
 
 # Build the command with all parameters
 CMD="uv run python ${SDP_DIR}/main.py \
-    --config-path ${SDP_DIR}/dataset_configs/vox_pipeline/granary/ \
+    --config-path ${SDP_DIR}/dataset_configs/vox_pipeline/ \
     --config-name ${CONFIG_NAME} \
     data_dir=${DATA_DIR} \
     output_dir=${OUTPUT_DIR} \

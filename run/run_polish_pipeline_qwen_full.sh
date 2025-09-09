@@ -8,7 +8,10 @@ set -e
 
 # Configuration
 DATA_DIR="data/audio"
-OUTPUT_DIR="outputs/vox_pipeline_pl_qwen_full"
+BRAND="bk"  # Burger King
+COUNTRY="pl"  # Poland
+CUTOFF_DATE=$(date +%Y%m%d)  # Today's date
+OUTPUT_DIR="outputs/${BRAND}-${COUNTRY}-${CUTOFF_DATE}-qwen"
 SDP_DIR="$(pwd)"
 
 echo "=========================================="
@@ -111,7 +114,7 @@ echo "This will take several hours..."
 echo ""
 
 uv run python main.py \
-    --config-path dataset_configs/vox_pipeline/granary/ \
+    --config-path dataset_configs/vox_pipeline/ \
     --config-name config_pl_qwen.yaml \
     data_dir="${DATA_DIR}" \
     output_dir="${OUTPUT_DIR}" \
@@ -164,6 +167,6 @@ echo "  ✓ Filler word preservation"
 echo ""
 echo "Next Steps:"
 echo "  1. Review the log: less ${OUTPUT_DIR}/pipeline_full.log"
-echo "  2. Upload to HuggingFace: ./run/upload_webdataset_to_hf.sh ${OUTPUT_DIR}/pl/webdataset VoxAI/bk-pl-$(date +%Y%m%d)"
+echo "  2. Upload to HuggingFace: ./run/upload_webdataset_to_hf.sh ${OUTPUT_DIR}/pl/webdataset VoxAI/${BRAND}-${COUNTRY}-${CUTOFF_DATE}"
 echo "  3. Or run Gemini verification: ./run/run_polish_pipeline_gemini_from_qwen.sh"
 echo "=========================================="

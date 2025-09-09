@@ -6,7 +6,10 @@
 # Set the paths
 SDP_DIR="/home/razhan/NeMo-speech-data-processor"
 DATA_DIR="${SDP_DIR}/data/audio"  # Base data directory (processor adds bk/pl)
-OUTPUT_DIR="${SDP_DIR}/outputs/vox_pipeline_pl_$(date +%Y%m%d_%H%M%S)"
+BRAND="bk"  # Burger King
+COUNTRY="pl"  # Poland
+CUTOFF_DATE=$(date +%Y%m%d)  # Today's date
+OUTPUT_DIR="${SDP_DIR}/outputs/${BRAND}-${COUNTRY}-${CUTOFF_DATE}_$(date +%H%M%S)"
 
 # GPU Configuration for vLLM
 export CUDA_VISIBLE_DEVICES=1  # Use GPU 1 for vLLM inference
@@ -47,7 +50,7 @@ mkdir -p ${OUTPUT_DIR}
 
 # Build the command with all parameters
 CMD="uv run python ${SDP_DIR}/main.py \
-    --config-path ${SDP_DIR}/dataset_configs/vox_pipeline/granary/ \
+    --config-path ${SDP_DIR}/dataset_configs/vox_pipeline/ \
     --config-name ${CONFIG_NAME} \
     data_dir=${DATA_DIR} \
     output_dir=${OUTPUT_DIR} \

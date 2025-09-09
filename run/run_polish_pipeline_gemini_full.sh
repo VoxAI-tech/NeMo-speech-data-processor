@@ -8,7 +8,10 @@ set -e
 
 # Configuration
 DATA_DIR="data/audio"
-OUTPUT_DIR="outputs/vox_pipeline_pl_gemini_full"
+BRAND="bk"  # Burger King
+COUNTRY="pl"  # Poland
+CUTOFF_DATE=$(date +%Y%m%d)  # Today's date
+OUTPUT_DIR="outputs/${BRAND}-${COUNTRY}-${CUTOFF_DATE}-gemini-full"
 SDP_DIR="$(pwd)"
 # Process ALL samples - no limit
 MAX_SAMPLES=10  # REMOVE THIS LINE TO PROCESS FULL DATASET
@@ -42,7 +45,7 @@ echo "This will take significantly longer than text-only correction..."
 echo ""
 
 uv run python main.py \
-    --config-path dataset_configs/vox_pipeline/granary/ \
+    --config-path dataset_configs/vox_pipeline/ \
     --config-name config_pl_gemini.yaml \
     data_dir="${DATA_DIR}" \
     output_dir="${OUTPUT_DIR}" \

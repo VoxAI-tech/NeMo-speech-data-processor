@@ -26,7 +26,7 @@ documentation: |
   
   Usage:
     python main.py \
-      --config-path dataset_configs/vox_pipeline/granary/ \
+      --config-path dataset_configs/vox_pipeline/ \
       --config-name config_pl.yaml \
       data_dir=data/audio \
       output_dir=outputs/vox_pipeline_pl \
@@ -37,6 +37,10 @@ data_dir: ???  # Required: Path to raw audio data
 output_dir: ???  # Required: Path where outputs will be saved
 sdp_dir: ???  # Required: Path to NeMo-speech-data-processor repo
 cache_dir: ${output_dir}/cache
+
+# Brand and country configuration
+brand: bk  # Burger King
+country: pl  # Poland
 
 # Processing parameters
 params:
@@ -261,7 +265,7 @@ processors:
   - _target_: sdp.processors.DetectWhisperHallucinationFeatures
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_19.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_20.json
-    common_hall_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/common_phrases/${params.source_lang}.txt
+    common_hall_file: ${sdp_dir}/dataset_configs/vox_pipeline/partials/common_phrases/${params.source_lang}.txt
     text_field: text
 
   # ========== STAGE 21: Filter hallucinated segments ==========
@@ -293,7 +297,7 @@ processors:
   - _target_: sdp.processors.menu_aware_correction.MenuAwareCorrection
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_22.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_23.json
-    menu_vocabulary_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/bk_menu_vocabulary.json
+    menu_vocabulary_file: ${sdp_dir}/dataset_configs/vox_pipeline/bk_menu_vocabulary.json
     text_field: text
     corrected_field: text_menu_corrected
     fuzzy_threshold: 80
@@ -313,7 +317,7 @@ processors:
     correction_made_field: gemini_correction_made
     offset_field: offset
     duration_field: duration
-    prompt_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/gemini_audio_prompts/${params.source_lang}.yaml
+    prompt_file: ${sdp_dir}/dataset_configs/vox_pipeline/partials/gemini_audio_prompts/${params.source_lang}.yaml
     model: gemini-2.5-pro
     temperature: 0.1
     max_workers: 10  # Parallel processing
@@ -328,7 +332,7 @@ processors:
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_25.json
     generation_field: src_text
-    prompt_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/pr_recovery_prompts/${params.source_lang}.yaml
+    prompt_file: ${sdp_dir}/dataset_configs/vox_pipeline/partials/pr_recovery_prompts/${params.source_lang}.yaml
     model:
       model: Qwen/Qwen3-8B
       tensor_parallel_size: 1
@@ -362,7 +366,7 @@ processors:
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_26.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_27.json
     text_key: src_text  # Apply to Qwen-processed text
-    regex_params_yaml: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/subregex_params/${params.use_regex}.yaml
+    regex_params_yaml: ${sdp_dir}/dataset_configs/vox_pipeline/partials/subregex_params/${params.use_regex}.yaml
 
   # ========== STAGE 28: Drop intermediate text fields ==========
   - _target_: sdp.processors.DropSpecifiedFields
@@ -389,7 +393,7 @@ processors:
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_29.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_30.json
     fields:
-      dataset: bk_pl_drive_thru
+      dataset: ${brand}_${country}_drive_thru
       language: ${params.source_lang}
     
   # ========== STAGE 31: Final field selection ==========

@@ -8,8 +8,11 @@ set -e
 
 # Configuration
 DATA_DIR="data/audio"
+BRAND="bk"  # Burger King
+COUNTRY="pl"  # Poland
+CUTOFF_DATE=$(date +%Y%m%d)  # Today's date
 QWEN_OUTPUT_DIR="outputs/vox_pipeline_pl_qwen_full"  # Source for manifest_23 from FULL Qwen run
-OUTPUT_DIR="outputs/vox_pipeline_pl_gemini_from_qwen"
+OUTPUT_DIR="outputs/${BRAND}-${COUNTRY}-${CUTOFF_DATE}-gemini"
 SDP_DIR="$(pwd)"
 
 echo "=========================================="
@@ -200,7 +203,7 @@ echo "This will make API calls to Gemini for each audio segment..."
 echo ""
 
 uv run python main.py \
-    --config-path dataset_configs/vox_pipeline/granary/ \
+    --config-path dataset_configs/vox_pipeline/ \
     --config-name config_pl_gemini_from_qwen.yaml \
     data_dir="${DATA_DIR}" \
     qwen_output_dir="${QWEN_OUTPUT_DIR}" \
@@ -282,5 +285,5 @@ echo ""
 echo "Next Steps:"
 echo "  1. Review the log: less ${OUTPUT_DIR}/gemini_from_qwen.log"
 echo "  2. Compare with Qwen: python scripts/compare_qwen_gemini_corrections.py"
-echo "  3. Upload to HuggingFace: ./run/upload_webdataset_to_hf.sh ${OUTPUT_DIR}/pl/webdataset VoxAI/bk-pl-$(date +%Y%m%d)-gemini"
+echo "  3. Upload to HuggingFace: ./run/upload_webdataset_to_hf.sh ${OUTPUT_DIR}/pl/webdataset VoxAI/${BRAND}-${COUNTRY}-${CUTOFF_DATE}-gemini"
 echo "=========================================="

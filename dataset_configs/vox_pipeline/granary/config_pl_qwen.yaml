@@ -1,10 +1,11 @@
 documentation: |
-  Vox Pipeline - BK Poland Drive-thru Audio Dataset Creation
-  ===========================================================
+  Vox Pipeline - BK Poland Drive-thru Audio Dataset Creation (Qwen LLM Version)
+  =============================================================================
   
   Overview
   --------
   This configuration processes drive-thru audio conversations from Burger King Poland.
+  Uses Qwen LLM for menu correction instead of Gemini audio verification (faster).
   Handles Polish language audio with customer (mic) and staff (spk) channels.
   
   Data Structure:
@@ -41,7 +42,7 @@ cache_dir: ${output_dir}/cache
 # Processing parameters
 params:
   audio_channel: mic  # 'mic' for customer or 'spk' for employee
-  max_samples: 10  # Testing with 10 samples
+  max_samples: -1  # Testing with 10 samples
   source_lang: pl  # Polish
   source_lang_full: Polish
   min_audio_lid_probability: 0.7
@@ -153,9 +154,17 @@ processors:
     fields_to_drop:
       - duration
 
+  # ========== STAGE 9.5: Filter out entries with empty segments ==========
+  - _target_: sdp.processors.LambdaExpression
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_09.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_09_filtered.json
+    new_field: has_segments
+    expression: 'len(entry.segments) > 0'
+    filter: true
+
   # ========== STAGE 10: Convert segments list to individual entries ==========
   - _target_: sdp.processors.ListToEntries
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_09.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_09_filtered.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_10.json
     field_with_list: segments
 
@@ -300,31 +309,40 @@ processors:
     context_window: 3
     save_corrections: true
 
-  # ========== STAGE 24: Gemini Audio Correction (Listen to audio for spelling) ==========
-  # NOTE: Requires GEMINI_API_KEY environment variable
-  # This step listens to the actual audio to verify and correct menu item spellings ONLY
-  - _target_: sdp.processors.gemini_audio_correction.GeminiAudioCorrection
+  # ========== STAGE 24: Qwen LLM Menu Correction (Text-based, faster than Gemini audio) ==========
+  # Uses Qwen3-8B to correct menu items and Polish model specific errors
+  - _target_: sdp.processors.inference.llm.vllm.vllm.vLLMInference
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_23.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_24.json
-    audio_filepath_field: audio_filepath
-    original_text_field: text_menu_corrected  # Use fuzzy-corrected text as input
-    corrected_text_field: gemini_corrected_text
-    confidence_field: gemini_confidence
-    correction_made_field: gemini_correction_made
-    offset_field: offset
-    duration_field: duration
-    prompt_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/gemini_audio_prompts/${params.source_lang}.yaml
-    model: gemini-2.5-pro
-    temperature: 0.1
-    max_workers: 10  # Parallel processing
-    requests_per_minute: 900  # Stay under API limit
-    api_key: ${oc.env:GEMINI_API_KEY, null}
-    save_errors: true
-    error_log_file: ${output_dir}/${params.source_lang}/gemini_errors.json
+    prompt_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/menu_correction_prompts/${params.source_lang}.yaml
+    generation_field: llm_corrected_text
+    model:
+      model: Qwen/Qwen3-8B
+      tensor_parallel_size: 1
+      max_model_len: 2048  # Increased for menu context
+      enable_chunked_prefill: true
+      max_num_batched_tokens: 1024  # Increased for context
+      enforce_eager: true
+      dtype: float16
+      gpu_memory_utilization: 0.90  # Slightly higher utilization
+      max_num_seqs: 2  # Smaller batch for better quality
+    inference:
+      temperature: 0.1  # Very low for consistent spelling corrections
+      top_p: 0.95  # High for coverage of menu vocabulary
+      top_k: 50  # Increased for menu vocabulary coverage
+      repetition_penalty: 1.0  # No penalty for consistent menu terms
+      max_tokens: 256
+    apply_chat_template:
+      tokenize: false
+      add_generation_prompt: true
+      enable_thinking: false  # CRITICAL: Disable thinking mode to prevent output contamination
+    save_outputs: true
+    output_dir: ${output_dir}/${params.source_lang}/llm_menu_corrections
+    error_log_file: ${output_dir}/${params.source_lang}/qwen_llm_errors.json
 
   # ========== STAGE 25: Punctuation & Capitalization Restoration with Qwen ==========
   # Fix capitalization and punctuation AFTER spelling corrections
-  - _target_: sdp.processors.vLLMInference
+  - _target_: sdp.processors.inference.llm.vllm.vllm.vLLMInference
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_25.json
     generation_field: src_text
@@ -354,7 +372,7 @@ processors:
   - _target_: sdp.processors.CleanQwenGeneration
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_25.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_26.json
-    text_field: gemini_corrected_text  # Original text to keep
+    text_field: llm_corrected_text  # Original text to keep
     generation_field: src_text  # Qwen output to clean
 
   # ========== STAGE 27: Text Normalization with Regex ==========
@@ -374,7 +392,7 @@ processors:
       - menu_corrections
       - num_corrections
       - gemini_corrections
-      - gemini_corrected_text
+      - llm_corrected_text
 
   # ========== STAGE 29: Rename final text field ==========
   - _target_: sdp.processors.RenameFields

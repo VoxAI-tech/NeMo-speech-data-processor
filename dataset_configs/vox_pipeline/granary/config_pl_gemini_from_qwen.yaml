@@ -1,0 +1,184 @@
+documentation: |
+  Vox Pipeline - BK Poland Drive-thru Audio Dataset Creation (Gemini from Qwen Base)
+  ===================================================================================
+  
+  Overview
+  --------
+  This configuration REUSES manifests from the Qwen pipeline up to Stage 23,
+  then continues with Gemini audio verification from Stage 24 onwards.
+  This saves processing time by not re-running identical stages.
+  
+  IMPORTANT: Requires running Qwen pipeline first (at least up to manifest_23.json)
+  
+  Usage:
+    1. First run Qwen pipeline (creates manifests 00-23)
+    2. Then run this config pointing to Qwen's output directory
+    
+    python main.py \
+      --config-path dataset_configs/vox_pipeline/granary/ \
+      --config-name config_pl_gemini_from_qwen.yaml \
+      data_dir=data/audio \
+      qwen_output_dir=outputs/vox_pipeline_pl_qwen_test \
+      output_dir=outputs/vox_pipeline_pl_gemini_from_qwen \
+      sdp_dir=/path/to/NeMo-speech-data-processor
+
+# Base configuration paths
+data_dir: ???  # Required: Path to raw audio data
+qwen_output_dir: ???  # Required: Path to Qwen pipeline output (for reusing manifests)
+output_dir: ???  # Required: Path where Gemini outputs will be saved
+sdp_dir: ???  # Required: Path to NeMo-speech-data-processor repo
+cache_dir: ${output_dir}/cache
+
+# Processing parameters
+params:
+  audio_channel: mic  # 'mic' for customer or 'spk' for employee
+  source_lang: pl  # Polish
+  source_lang_full: Polish
+  min_audio_lid_probability: 0.7
+  min_audio_duration: 0.5  # seconds
+  max_audio_duration: 30  # seconds
+  use_regex: common  # Options: common, all
+  save_disk_space: false  # If true, removes intermediate files
+
+# Which processors to run
+processors_to_run: all
+
+# Use Dask for parallel processing
+use_dask: false  # Set to false to avoid import issues
+
+# Pipeline processors - Starting from Stage 24 (after Menu-Aware Correction)
+processors:
+  # ========== STAGE 0: Copy manifest_23 from Qwen pipeline ==========
+  # This stage copies the last common manifest from Qwen pipeline
+  - _target_: sdp.processors.copy_file.CopyFile
+    input_file: ${qwen_output_dir}/${params.source_lang}/manifest_23.json
+    output_file: ${output_dir}/${params.source_lang}/manifest_23.json
+
+  # ========== STAGE 24: Gemini Audio Correction (Listen to audio for spelling) ==========
+  # NOTE: Requires GEMINI_API_KEY environment variable
+  # This step listens to the actual audio to verify and correct menu item spellings ONLY
+  # CACHING: Automatically resumes from existing manifest_24.json if found (e.g., after rate limit)
+  - _target_: sdp.processors.gemini_audio_correction.GeminiAudioCorrection
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_23.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_24.json
+    audio_filepath_field: audio_filepath
+    original_text_field: text_menu_corrected  # Use fuzzy-corrected text as input
+    corrected_text_field: gemini_corrected_text
+    confidence_field: gemini_confidence
+    correction_made_field: gemini_correction_made
+    offset_field: offset
+    duration_field: duration
+    prompt_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/gemini_audio_prompts/${params.source_lang}.yaml
+    model: gemini-2.5-pro  # Tier 1 limits: 150 RPM, 10,000 RPD
+    temperature: 0.1
+    max_workers: 5  # Optimal for 150 RPM (2.5 req/sec) to handle processing time
+    requests_per_minute: 145  # Slightly below 150 limit for safety margin
+    api_key: ${oc.env:GEMINI_API_KEY, null}
+    save_errors: true
+    error_log_file: ${output_dir}/${params.source_lang}/gemini_errors.json
+    # Caching configuration (for resuming after rate limits)
+    use_cache: true  # Enable caching to resume from interruptions
+    cache_dir: ${output_dir}/${params.source_lang}/gemini_cache  # Directory for cache files
+
+  # ========== STAGE 25: Punctuation & Capitalization Restoration with Qwen ==========
+  # Fix capitalization and punctuation AFTER spelling corrections
+  - _target_: sdp.processors.inference.llm.vllm.vllm.vLLMInference
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_25.json
+    generation_field: src_text
+    prompt_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/pr_recovery_prompts/${params.source_lang}.yaml
+    model:
+      model: Qwen/Qwen3-8B
+      tensor_parallel_size: 1
+      max_model_len: 1024
+      enable_chunked_prefill: true
+      max_num_batched_tokens: 512
+      enforce_eager: true
+      dtype: float16
+      gpu_memory_utilization: 0.85
+      max_num_seqs: 4
+    inference:
+      temperature: 0.3
+      top_p: 0.8
+      top_k: 20
+      repetition_penalty: 1.05
+      max_tokens: 256
+    apply_chat_template:
+      tokenize: false
+      add_generation_prompt: true
+      enable_thinking: false
+
+  # ========== STAGE 26: Clean Qwen Generation Output ==========
+  - _target_: sdp.processors.CleanQwenGeneration
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_25.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_26.json
+    text_field: gemini_corrected_text  # Original text to keep
+    generation_field: src_text  # Qwen output to clean
+
+  # ========== STAGE 27: Text Normalization with Regex ==========
+  - _target_: sdp.processors.SubRegex
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_26.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_27.json
+    text_key: src_text  # Apply to Qwen-processed text
+    regex_params_yaml: ${sdp_dir}/dataset_configs/vox_pipeline/granary/partials/subregex_params/${params.use_regex}.yaml
+
+  # ========== STAGE 28: Drop intermediate text fields ==========
+  - _target_: sdp.processors.DropSpecifiedFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_27.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_28.json
+    fields_to_drop:
+      - text
+      - text_menu_corrected
+      - menu_corrections
+      - num_corrections
+      - gemini_corrections
+      - gemini_corrected_text
+
+  # ========== STAGE 29: Rename final text field ==========
+  - _target_: sdp.processors.RenameFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_28.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_29.json
+    rename_fields:
+      src_text: text  # Final cleaned text
+      offset: source_audio_offset
+      
+  # ========== STAGE 30: Add constant metadata fields ==========
+  - _target_: sdp.processors.AddConstantFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_29.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_30.json
+    fields:
+      dataset: bk_pl_drive_thru
+      language: ${params.source_lang}
+    
+  # ========== STAGE 31: Final field selection ==========
+  - _target_: sdp.processors.flexible_field_keeper.FlexibleKeepFields
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_30.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_31.json
+    fields_to_keep:
+      - audio_filepath
+      - text
+      - duration
+      - source_audio_offset
+      - segment_id
+      - audio_type
+      - device_id
+      - session_id
+      - audio_id
+      - dataset
+      - language
+      - gemini_confidence
+      - gemini_correction_made
+
+  # ========== STAGE 32: Convert to WebDataset (TAR archives with wav/json pairs) ==========
+  - _target_: sdp.processors.convert_to_webdataset.ConvertToWebDataset
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_31.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_32.json
+    output_dir: ${output_dir}/${params.source_lang}/webdataset
+    shard_size: 100  # Files per shard
+    split: train
+    prefix: shard
+    shuffle: true
+    shuffle_seed: 42
+    slice_with_offset: true  # Extract audio segments
+    speaker_field: speaker  # Include in metadata
+    include_metadata: true

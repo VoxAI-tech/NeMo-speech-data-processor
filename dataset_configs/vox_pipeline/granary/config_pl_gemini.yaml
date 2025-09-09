@@ -1,22 +1,21 @@
 documentation: |
-  Vox Pipeline - Drive-thru Audio Dataset Creation
-  =================================================
+  Vox Pipeline - BK Poland Drive-thru Audio Dataset Creation (Gemini Audio Version)
+  ==================================================================================
   
   Overview
   --------
-  This configuration processes drive-thru audio conversations from El Jannah Australia.
-  It's adapted from the Granary pipeline to handle conversational audio with customer (mic) 
-  and staff (spk) channels, including all quality processing steps except translation.
+  This configuration processes drive-thru audio conversations from Burger King Poland.
+  Uses Gemini audio verification for highest accuracy (slower but more accurate).
+  Handles Polish language audio with customer (mic) and staff (spk) channels.
   
   Data Structure:
-  - Input: data/audio/ej/au/{device_id}/{year}/{month}/{day}/{hour}/{session_id}/{mic.wav, spk.wav}
+  - Input: data/audio/bk/{device_id}/{year}/{month}/{day}/{hour}/{session_id}/{mic.wav, spk.wav}
   - Each session has two WAV files: mic (customer) and spk (employee)
-  - 4 devices: 90104C41, 1200UD26, 1840UD05, 1853UD05
   
   Pipeline Stages:
   1. Create initial manifest from drive-thru audio directory
   2. Convert audio to 16kHz mono with preserved structure
-  3. Language detection and filtering
+  3. Language detection and filtering (Polish)
   4. Two-pass Whisper transcription (segments + slice-by-offset)
   5. Hallucination detection and filtering
   6. Menu fuzzy matching (first pass correction)
@@ -29,9 +28,9 @@ documentation: |
   Usage:
     python main.py \
       --config-path dataset_configs/vox_pipeline/granary/ \
-      --config-name config_reordered.yaml \
+      --config-name config_pl.yaml \
       data_dir=data/audio \
-      output_dir=outputs/vox_pipeline \
+      output_dir=outputs/vox_pipeline_pl \
       sdp_dir=/path/to/NeMo-speech-data-processor
 
 # Base configuration paths
@@ -43,9 +42,9 @@ cache_dir: ${output_dir}/cache
 # Processing parameters
 params:
   audio_channel: mic  # 'mic' for customer or 'spk' for employee
-  max_samples: -1  # -1 for all samples, or specific number for testing
-  source_lang: en
-  source_lang_full: English
+  max_samples: -1  # Testing with 10 samples
+  source_lang: pl  # Polish
+  source_lang_full: Polish
   min_audio_lid_probability: 0.7
   min_audio_duration: 0.5  # seconds
   max_audio_duration: 30  # seconds
@@ -60,7 +59,7 @@ params:
 processors_to_run: all
 
 # Use Dask for parallel processing
-use_dask: true
+use_dask: false  # Set to false to avoid import issues
 
 # Pipeline processors
 processors:
@@ -68,10 +67,10 @@ processors:
   - _target_: sdp.processors.datasets.vox.create_initial_manifest.CreateInitialManifestVox
     raw_data_dir: ${data_dir}
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_00.json
-    brand_code: ej  # El Jannah
-    country_code: au  # Australia
-    brand_name: El Jannah
-    country_name: Australia
+    brand_code: bk  # Burger King
+    country_code: pl  # Poland
+    brand_name: Burger King
+    country_name: Poland
     speaker: ${params.audio_channel}  # mic or spk
 
   # ========== STAGE 1: Create unique audio ID ==========
@@ -119,7 +118,7 @@ processors:
     save_timestamps_separately: false
     skip_corrupted_audios: true
 
-  # ========== STAGE 6: Filter by language ==========
+  # ========== STAGE 6: Filter by language (Polish) ==========
   - _target_: sdp.processors.LambdaExpression
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_05.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_06.json
@@ -140,7 +139,7 @@ processors:
   - _target_: sdp.processors.FasterWhisperInference
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_07.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_08.json
-    model_size_or_path: large-v3
+    model_size_or_path: VoxAI/whisper-large-v3-polish-ct2
     output_dir: ${output_dir}/${params.source_lang}/step_08
     num_devices: -1
     inference:
@@ -155,9 +154,17 @@ processors:
     fields_to_drop:
       - duration
 
+  # ========== STAGE 9.5: Filter out entries with empty segments ==========
+  - _target_: sdp.processors.LambdaExpression
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_09.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_09_filtered.json
+    new_field: has_segments
+    expression: 'len(entry.segments) > 0'
+    filter: true
+
   # ========== STAGE 10: Convert segments list to individual entries ==========
   - _target_: sdp.processors.ListToEntries
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_09.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_09_filtered.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_10.json
     field_with_list: segments
 
@@ -219,7 +226,7 @@ processors:
   - _target_: sdp.processors.FasterWhisperInference
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_15.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_16.json
-    model_size_or_path: large-v3
+    model_size_or_path: VoxAI/whisper-large-v3-polish-ct2
     num_devices: -1
     output_dir: ${output_dir}/${params.source_lang}/step_16
     inference:
@@ -291,11 +298,11 @@ processors:
       - audio_id
       
   # ========== STAGE 23: Menu-Aware Correction (Fuzzy Matching - First Pass) ==========
-  # Initial menu item correction based on fuzzy matching
+  # Initial menu item correction based on fuzzy matching for BK Poland
   - _target_: sdp.processors.menu_aware_correction.MenuAwareCorrection
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_22.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_23.json
-    menu_vocabulary_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/menu_vocabulary.json
+    menu_vocabulary_file: ${sdp_dir}/dataset_configs/vox_pipeline/granary/bk_menu_vocabulary.json
     text_field: text
     corrected_field: text_menu_corrected
     fuzzy_threshold: 80
@@ -391,7 +398,7 @@ processors:
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_29.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_30.json
     fields:
-      dataset: ej_au_drive_thru
+      dataset: bk_pl_drive_thru
       language: ${params.source_lang}
     
   # ========== STAGE 31: Final field selection ==========

@@ -147,7 +147,7 @@ Removes hallucination detection fields.
 First-pass menu item correction.
 - Fuzzy matching threshold: 80%
 - Context window: 3 words
-- Menu vocabulary: `bk_menu_vocabulary.json`
+- Menu vocabulary: `assets/vocabularies/bk_menu_vocabulary.json`
 - Preserves Polish words (kurczak, ser)
 
 #### Stage 24: Gemini Audio Verification (Optional)
@@ -221,7 +221,12 @@ Creates tar archives for efficient training.
 - `config_pl_gemini_from_qwen.yaml` - Gemini verification (stages 24-32)
 
 ### Supporting Files
-- `bk_menu_vocabulary.json` - Menu items and misspellings
+- `assets/vocabularies/bk_menu_vocabulary.json` - Menu items and misspellings
+- `assets/vocabularies/menu_vocabulary.json` - El Jannah menu vocabulary  
+- `assets/menus/bk_menu.json` - Burger King menu data
+- `assets/menus/el_jannah_menu.json` - El Jannah menu data
+- `assets/scripts/extract_bk_menu_vocabulary.py` - BK vocabulary extractor
+- `assets/scripts/extract_menu_vocabulary.py` - El Jannah vocabulary extractor
 - `partials/gemini_audio_prompts/pl.yaml` - Gemini prompts
 - `partials/pr_recovery_prompts/pl.yaml` - Punctuation prompts
 - `partials/common_phrases/pl.txt` - Hallucination patterns
@@ -329,3 +334,136 @@ webdataset/
 Each tar contains:
 - `.wav` - Audio segment (extracted with offset/duration)
 - `.json` - Metadata and transcription
+
+## Menu Vocabulary Management
+
+The pipeline includes automated menu vocabulary extraction to support different restaurant chains and languages. The assets folder contains organized menu data and extraction scripts.
+
+### Assets Structure
+
+```
+dataset_configs/vox_pipeline/assets/
+├── menus/                      # Raw menu data
+│   ├── bk_menu.json           # Burger King menu items
+│   └── el_jannah_menu.json    # El Jannah menu items
+├── vocabularies/              # Generated vocabularies for correction
+│   ├── bk_menu_vocabulary.json        # BK vocabulary with corrections
+│   └── menu_vocabulary.json           # El Jannah vocabulary
+└── scripts/                   # Vocabulary extraction tools
+    ├── extract_bk_menu_vocabulary.py  # BK-specific extractor
+    └── extract_menu_vocabulary.py     # General menu extractor
+```
+
+### Adding New Restaurant Menus
+
+To add a new restaurant chain to the pipeline:
+
+#### 1. Prepare Menu Data
+Create a JSON file with the restaurant's menu structure in `assets/menus/`:
+
+```json
+[
+  {
+    "name": "Whopper Burger",
+    "category": "burgers",
+    "price": 12.50,
+    "option_groups": [
+      {
+        "name": "size",
+        "options": [
+          {"name": "small", "price": 0},
+          {"name": "large", "price": 2}
+        ]
+      }
+    ]
+  }
+]
+```
+
+#### 2. Extract Vocabulary
+Use the appropriate extraction script based on your menu format:
+
+**For Burger King-style menus:**
+```bash
+cd dataset_configs/vox_pipeline/assets/scripts
+python extract_bk_menu_vocabulary.py
+```
+
+**For El Jannah-style menus:**
+```bash
+cd dataset_configs/vox_pipeline/assets/scripts
+python extract_menu_vocabulary.py
+```
+
+#### 3. Customize Vocabulary Extraction
+
+The extraction scripts automatically:
+- Categorize menu items (chicken, sauces, sides, drinks, etc.)
+- Extract base items without size modifiers
+- Include option variations
+- Generate common misspelling corrections
+
+**Key vocabulary categories:**
+- `chicken_items` - Chicken dishes and parts
+- `sauces` - All sauce variations
+- `sides` - Side dishes and accompaniments
+- `drinks` - Beverages
+- `rolls_burgers` - Sandwich items
+- `sizes` - Size modifiers (small, medium, large)
+- `modifiers` - Request modifiers (add, no, extra, etc.)
+- `corrections` - Misspelling → correct mappings
+
+#### 4. Configure Pipeline
+
+Update your pipeline configuration to use the new vocabulary:
+
+```yaml
+- _target_: sdp.processors.menu_aware_correction.MenuAwareCorrection
+  menu_vocabulary_file: ${sdp_dir}/dataset_configs/vox_pipeline/assets/vocabularies/your_menu_vocabulary.json
+```
+
+### Best Practices for Menu Vocabularies
+
+#### Conservative Corrections
+Only include obvious misspellings in the corrections dictionary:
+
+```json
+{
+  "corrections": {
+    "whooper": "whopper",          // Clear misspelling
+    "whoppera": "whopper",         // Clear misspelling
+    "tubuli": "tabouli",          // Clear misspelling
+    // DON'T include:
+    // "garlic": "garlic sauce"    // Let users say abbreviated forms
+    // "quarter": "1/4 chicken"   // Preserve natural speech
+  }
+}
+```
+
+#### Language Considerations
+- **Polish**: Preserve Polish words (kurczak, ser) - don't auto-translate
+- **English**: Keep natural abbreviations (garlic vs garlic sauce)
+- **Arabic**: Include transliteration variations for Arabic menu items
+
+#### Testing Vocabulary Changes
+After updating vocabularies, test with small samples:
+
+```bash
+# Test vocabulary changes
+python main.py \
+  --config-path dataset_configs/vox_pipeline/ \
+  --config-name config_pl_qwen.yaml \
+  params.max_samples=10 \
+  processors_to_run="22:24"  # Just run menu correction stages
+```
+
+### Supported Menu Formats
+
+The extraction scripts handle various menu data structures:
+
+1. **Flat item lists** (simple name/price pairs)
+2. **Categorized menus** (items grouped by category)
+3. **Option groups** (customizations and modifiers)
+4. **Nested variations** (sizes, add-ons, combinations)
+
+For custom menu formats, extend the extraction scripts or create new ones following the established patterns.

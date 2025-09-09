@@ -30,6 +30,22 @@ This repository includes specialized pipelines for processing drive-thru audio d
 - **Smart Segmentation:** VAD-based audio splitting with configurable thresholds
 - **WebDataset Export:** Ready for training with tar archives
 
+### Documentation
+
+- **[Pipeline Architecture](docs/vox_pipeline.md):** Complete technical documentation of the 32-stage pipeline
+  - Detailed configuration explanations for each processing stage
+  - Input/output manifest transformations at each step
+  - Parameter tuning guidelines and best practices
+  - Troubleshooting common issues
+
+- **[Future Enhancements](docs/proposal.md):** Research-backed improvements that can be added to further optimize the pipeline:
+  - Cross-channel audio bleed reduction using spectral subtraction
+  - Advanced dual-stage VAD for short utterances (0.5-3s)
+  - Multi-pass processing architecture with iterative refinement
+  - Active learning integration for sample selection
+  - Whisper contextual biasing without full fine-tuning
+  - Expected WER improvements: 25-40% reduction
+
 ## Features
 
 - **Creating Manifests:** Generate manifests for your datasets.
@@ -88,32 +104,23 @@ The pipelines are configured in `dataset_configs/vox_pipeline/granary/`:
 - `config_pl_qwen.yaml` - Full Qwen pipeline with 32 processing stages
 - `config_pl_gemini_from_qwen.yaml` - Gemini audio verification (stages 24-32)
 
+For detailed configuration options and stage-by-stage explanations, see [Pipeline Architecture Documentation](docs/vox_pipeline.md).
+
 ### Processing Stages Overview
 
-1. **Audio Preparation** (Stages 0-5)
-   - Convert audio to mono WAV format
-   - Create initial manifest from raw audio files
-   - Extract metadata (device ID, session ID, channel)
+The pipeline consists of 32 stages organized into 9 phases:
 
-2. **Transcription** (Stages 6-10)
-   - Run Whisper ASR (voxai/whisper-large-v3-polish-ct2)
-   - VAD-based segmentation
-   - Filter by audio duration and quality
+1. **Audio Preparation** (Stages 0-4): Format standardization and metadata extraction
+2. **Language Detection** (Stages 5-7): Filter for target language (Polish)
+3. **Initial Transcription** (Stages 8-10): Whisper ASR with segment boundaries
+4. **Segment Processing** (Stages 11-15): Split into individual utterances
+5. **Refined Transcription** (Stage 16-18): Second-pass ASR on segments
+6. **Quality Filtering** (Stages 19-22): Remove hallucinations and empty text
+7. **Text Correction** (Stages 23-24): Menu-aware fuzzy matching + Gemini verification
+8. **Text Enhancement** (Stages 25-27): Punctuation restoration and normalization
+9. **Final Processing** (Stages 28-32): WebDataset conversion
 
-3. **Language & Quality Filtering** (Stages 11-15)
-   - Language identification (keep Polish only)
-   - Remove empty/short transcripts
-   - Filter non-speech segments
-
-4. **Text Correction** (Stages 16-25)
-   - Menu vocabulary fuzzy matching
-   - LLM-based correction (Qwen) or Audio verification (Gemini)
-   - Punctuation and capitalization restoration
-
-5. **Final Processing** (Stages 26-32)
-   - Text normalization
-   - Add metadata fields
-   - Convert to WebDataset format
+See [docs/vox_pipeline.md](docs/vox_pipeline.md) for complete technical details of each stage.
 
 ### Upload to Hugging Face
 
@@ -142,6 +149,8 @@ params:
   max_audio_duration: 30   # Maximum segment duration
   min_audio_lid_probability: 0.7  # Language detection threshold
 ```
+
+For implementing advanced features like cross-channel processing or improved VAD, refer to [Enhancement Proposals](docs/proposal.md).
 
 ## Example:
 1. In this example we will load librispeech using SDP.

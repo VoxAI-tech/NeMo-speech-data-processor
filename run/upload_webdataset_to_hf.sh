@@ -1,141 +1,199 @@
 #!/bin/bash
 
-# Upload WebDataset to HuggingFace
-# Usage: ./upload_webdataset_to_hf.sh [dataset_name] [hf_username]
+# Upload WebDataset to Hugging Face Hub
+# Usage: ./upload_webdataset_to_hf.sh <dataset_path> [hf_repo_id]
+# Example: ./upload_webdataset_to_hf.sh outputs/vox_pipeline_pl_qwen_full/pl/webdataset username/dataset-name
 
 set -e
 
-# Color codes for output
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m' # No Color
-
-# Default values - adjust as needed
-DATASET_NAME=${1:-"ej-webdataset"}
-HF_USERNAME=${2:-"VoxAI"}
-
-# Find the most recent WebDataset directory
-LATEST_OUTPUT=$(ls -td outputs/vox_pipeline_*/en/webdataset 2>/dev/null | head -1)
-
-if [ -z "$LATEST_OUTPUT" ]; then
-    echo -e "${RED}Error: No WebDataset found in outputs/vox_pipeline_*/en/webdataset${NC}"
-    echo "Please run the pipeline first: bash run/run_vox_pipeline.sh"
+# Check if dataset path is provided
+if [ $# -lt 1 ]; then
+    echo "Error: Dataset path is required"
+    echo "Usage: $0 <dataset_path> [hf_repo_id]"
+    echo "Example: $0 outputs/vox_pipeline_pl_qwen_full/pl/webdataset username/bk-pl-drive-thru"
     exit 1
 fi
 
-DATASET_DIR="$LATEST_OUTPUT"
+DATASET_PATH="$1"
+HF_REPO_ID="${2:-}"  # Optional, will prompt if not provided
 
-echo -e "${GREEN}=== HuggingFace WebDataset Upload ===${NC}"
-echo "Dataset Name: $DATASET_NAME"
-echo "HuggingFace Username: $HF_USERNAME"
-echo "Dataset Directory: $DATASET_DIR"
-echo ""
-
-# Check if dataset directory exists and has files
-if [ ! -d "$DATASET_DIR" ]; then
-    echo -e "${RED}Error: Dataset directory not found: $DATASET_DIR${NC}"
+# Verify dataset path exists
+if [ ! -d "$DATASET_PATH" ]; then
+    echo "Error: Dataset path does not exist: $DATASET_PATH"
     exit 1
 fi
 
-# Count TAR files
-TAR_COUNT=$(find "$DATASET_DIR/train" -name "*.tar" 2>/dev/null | wc -l || echo 0)
-
+# Check for .tar files in the dataset path
+TAR_COUNT=$(find "$DATASET_PATH" -name "*.tar" 2>/dev/null | wc -l)
 if [ "$TAR_COUNT" -eq 0 ]; then
-    echo -e "${RED}Error: No TAR files found in $DATASET_DIR/train${NC}"
+    echo "Error: No .tar files found in $DATASET_PATH"
+    echo "Make sure the WebDataset conversion was successful"
     exit 1
 fi
 
-echo -e "${GREEN}WebDataset Statistics:${NC}"
-echo "- TAR shards: $TAR_COUNT"
-
-# Calculate total size
-TOTAL_SIZE=$(du -sb "$DATASET_DIR/train" | awk '{print $1}')
-TOTAL_SIZE_MB=$((TOTAL_SIZE / 1024 / 1024))
-echo "- Total size: ${TOTAL_SIZE_MB} MB"
-
-# Check if dataset_metadata.json exists and show stats
-METADATA_FILE="$DATASET_DIR/dataset_metadata.json"
-if [ -f "$METADATA_FILE" ]; then
-    echo ""
-    echo -e "${GREEN}Dataset Metadata:${NC}"
-    # Extract key stats using Python
-    python3 -c "
-import json
-with open('$METADATA_FILE', 'r') as f:
-    metadata = json.load(f)
-    print(f\"- Total shards: {metadata.get('total_shards', 'N/A')}\")
-    print(f\"- Total samples: {metadata.get('total_samples', 'N/A')}\")
-    print(f\"- Total duration: {metadata.get('total_duration_hours', 0):.2f} hours\")
-    print(f\"- Audio types: {metadata.get('audio_types', {})}\")
-    print(f\"- Shuffled: {metadata.get('shuffled', False)}\")
-    print(f\"- Slice with offset: {metadata.get('slice_with_offset', False)}\")
-"
-fi
-
+echo "========================================"
+echo "WebDataset Upload to Hugging Face Hub"
+echo "========================================"
+echo "Dataset path: $DATASET_PATH"
+echo "Found $TAR_COUNT tar files to upload"
 echo ""
 
-# Check if uv is installed
-if ! command -v uv &> /dev/null; then
-    echo -e "${RED}Error: uv is not installed${NC}"
-    echo "Please install uv first: https://github.com/astral-sh/uv"
-    exit 1
-fi
-
-# Install huggingface-hub if needed
-echo -e "${YELLOW}Checking dependencies...${NC}"
-uv pip install huggingface-hub click --quiet 2>/dev/null || true
-
-# Check if user is logged in to HuggingFace
-echo -e "${YELLOW}Checking HuggingFace authentication...${NC}"
-# Try new hf command first, fall back to huggingface-cli if needed
-if command -v hf &> /dev/null; then
-    if ! hf auth whoami &> /dev/null; then
-        echo -e "${YELLOW}Please login to HuggingFace:${NC}"
-        hf auth login
-    fi
-elif command -v huggingface-cli &> /dev/null; then
-    if ! huggingface-cli whoami &> /dev/null; then
-        echo -e "${YELLOW}Please login to HuggingFace:${NC}"
-        huggingface-cli login
-    fi
-else
-    echo -e "${YELLOW}Warning: HuggingFace CLI not found. Assuming logged in.${NC}"
-fi
-
-# Construct the full repository ID
-FULL_REPO_ID="$HF_USERNAME/$DATASET_NAME"
-
+# Get dataset size
+DATASET_SIZE=$(du -sh "$DATASET_PATH" | cut -f1)
+echo "Total dataset size: $DATASET_SIZE"
 echo ""
-echo -e "${YELLOW}Ready to upload WebDataset to: $FULL_REPO_ID${NC}"
-echo -e "${YELLOW}The repository will be created as private by default.${NC}"
+
+# If HF repo ID not provided, prompt for it
+if [ -z "$HF_REPO_ID" ]; then
+    echo "Enter Hugging Face repository ID (format: username/dataset-name):"
+    read -r HF_REPO_ID
+    
+    if [ -z "$HF_REPO_ID" ]; then
+        echo "Error: Repository ID is required"
+        exit 1
+    fi
+fi
+
+echo "Target repository: $HF_REPO_ID"
+echo ""
+
+# Check if user is logged in to Hugging Face
+echo "Checking Hugging Face authentication..."
+if ! uv run hf auth whoami &> /dev/null; then
+    echo "Not logged in to Hugging Face. Please log in:"
+    uv run hf auth login
+fi
+
+# Get logged-in username
+HF_USERNAME=$(uv run hf auth whoami 2>/dev/null | grep -E "username:|Username:" | awk '{print $2}' || echo "unknown")
+echo "Logged in as: $HF_USERNAME"
+echo ""
+
+# Extract dataset name from path for card creation
+DATASET_NAME=$(basename "$(dirname "$DATASET_PATH")")
+PIPELINE_TYPE=$(echo "$DATASET_PATH" | grep -o "qwen\|gemini" || echo "unknown")
+
+# Create a README for the dataset
+README_PATH="$DATASET_PATH/README.md"
+cat > "$README_PATH" << EOMD
+---
+language:
+- pl
+license: apache-2.0
+task_categories:
+- automatic-speech-recognition
+- text-generation
+pretty_name: Polish Drive-thru Conversations
+size_categories:
+- 1K<n<10K
+---
+
+# Polish Drive-thru Conversations Dataset
+
+This dataset contains transcribed Polish drive-thru conversations from Burger King Poland.
+
+## Dataset Details
+
+- **Language**: Polish (pl)
+- **Domain**: Drive-thru conversations
+- **Format**: WebDataset (tar files)
+- **Processing Pipeline**: ${PIPELINE_TYPE}
+- **ASR Model**: VoxAI/whisper-large-v3-polish-ct2
+- **Corrections**: $([ "$PIPELINE_TYPE" == "qwen" ] && echo "Qwen3-8B LLM" || echo "Gemini 2.5 Pro Audio")
+
+## Dataset Structure
+
+Each sample contains:
+- \`audio\`: Audio file (WAV format, 16kHz, mono)
+- \`text\`: Transcribed and corrected text
+- \`metadata\`: Additional information including:
+  - \`duration\`: Audio duration in seconds
+  - \`segment_id\`: Unique segment identifier
+  - \`session_id\`: Conversation session ID
+  - \`device_id\`: Recording device ID
+  - \`audio_type\`: Speaker type (customer/employee)
+  - \`dataset\`: Source dataset identifier
+  - \`language\`: Language code
+
+## Processing Pipeline
+
+1. Audio conversion to 16kHz mono
+2. Language detection and filtering (Polish only)
+3. ASR transcription using Polish-optimized Whisper model
+4. Hallucination detection and filtering
+5. Menu-aware correction with fuzzy matching
+6. LLM-based corrections for:
+   - Menu item spelling
+   - Polish language specific errors
+   - Punctuation restoration
+7. Text normalization
+
+## Usage
+
+\`\`\`python
+from webdataset import WebDataset
+
+# Load the dataset
+dataset = WebDataset("path/to/dataset/shard-{000000..999999}.tar")
+
+for sample in dataset:
+    audio = sample["audio"]
+    text = sample["text"]
+    metadata = sample["json"]
+\`\`\`
+
+## License
+
+This dataset is released under the Apache 2.0 License.
+EOMD
+
+echo "Created dataset card: $README_PATH"
 echo ""
 
 # Ask for confirmation
-read -p "Do you want to proceed with the upload? (y/n): " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "Upload cancelled."
+echo "========================================"
+echo "Ready to upload to Hugging Face Hub"
+echo "========================================"
+echo "Repository: $HF_REPO_ID"
+echo "Files to upload:"
+find "$DATASET_PATH" -name "*.tar" -o -name "*.json" -o -name "*.md" | head -10
+if [ "$TAR_COUNT" -gt 10 ]; then
+    echo "... and $(($TAR_COUNT - 10)) more tar files"
+fi
+echo ""
+echo -n "Do you want to proceed? (y/N): "
+read -r CONFIRM
+
+if [ "$CONFIRM" != "y" ] && [ "$CONFIRM" != "Y" ]; then
+    echo "Upload cancelled"
     exit 0
 fi
 
-# Run the upload script
+# Create the repository if it doesn't exist
 echo ""
-echo -e "${YELLOW}Uploading WebDataset to HuggingFace...${NC}"
-echo -e "${YELLOW}This may take a while depending on dataset size...${NC}"
+echo "Creating/verifying repository..."
+uv run hf repo create "$HF_REPO_ID" --repo-type dataset --private --exist-ok
 
-uv run python scripts/push_webdataset_to_hf.py "$DATASET_DIR" "$FULL_REPO_ID"
+# Upload the dataset
+echo ""
+echo "Starting upload..."
+echo "This may take a while depending on dataset size and internet speed..."
+
+# Use new hf upload command for better handling of large files
+uv run hf upload \
+    "$HF_REPO_ID" \
+    "$DATASET_PATH" \
+    . \
+    --repo-type dataset \
+    --commit-message "Upload Polish drive-thru WebDataset"
 
 echo ""
-echo -e "${GREEN}=== Upload Complete! ===${NC}"
-echo -e "${GREEN}Dataset URL: https://huggingface.co/datasets/$FULL_REPO_ID${NC}"
+echo "========================================"
+echo "Upload completed successfully!"
+echo "========================================"
+echo "Dataset available at: https://huggingface.co/datasets/$HF_REPO_ID"
 echo ""
-echo "Next steps:"
-echo "1. Visit the dataset page to verify upload"
-echo "2. Update dataset visibility settings if needed (currently private)"
-echo "3. Test loading the dataset with WebDataset:"
-echo "   import webdataset as wds"
-echo "   dataset = wds.WebDataset('https://huggingface.co/datasets/$FULL_REPO_ID/resolve/main/train/*.tar')"
-echo "4. Or with HuggingFace datasets:"
-echo "   from datasets import load_dataset"
-echo "   dataset = load_dataset('$FULL_REPO_ID', streaming=True)"
+echo "To use the dataset:"
+echo "  from datasets import load_dataset"
+echo "  dataset = load_dataset('$HF_REPO_ID', streaming=True)"
+echo "========================================"

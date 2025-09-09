@@ -14,7 +14,7 @@ export TOKENIZERS_PARALLELISM=false  # Avoid tokenizer warnings
 
 # Configuration parameters
 AUDIO_CHANNEL="mic"  # Change to "spk" for employee audio
-MAX_SAMPLES=100      # Process 100 samples to monitor errors
+MAX_SAMPLES=10      # Process 100 samples to monitor errors
 CONFIG_NAME="config_pl.yaml"  # Polish pipeline configuration
 
 # Tar creation parameters

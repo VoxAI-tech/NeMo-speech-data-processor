@@ -15,16 +15,15 @@ documentation: |
   
   Pipeline Stages:
   1. Create initial manifest from drive-thru audio directory
-  2. Convert audio to 16kHz mono with preserved structure
-  3. Language detection and filtering (English)
-  4. Two-pass Whisper transcription (segments + slice-by-offset)
-  5. Hallucination detection and filtering
-  6. Menu fuzzy matching (first pass correction)
-  7. Qwen LLM menu correction (spelling and menu items)
-  8. Qwen punctuation/capitalization restoration
-  9. Text normalization with regex
-  10. Optional conversion to tarred dataset
-  11. Output final manifest with all metadata
+    3. Language detection and filtering (English)
+  2. Two-pass Whisper transcription (segments + slice-by-offset)
+  3. Hallucination detection and filtering
+  4. Menu fuzzy matching (first pass correction)
+  5. Qwen LLM menu correction (spelling and menu items)
+  6. Qwen punctuation/capitalization restoration
+  7. Text normalization with regex
+  8. Optional conversion to tarred dataset
+  9. Output final manifest with all metadata
   
   Usage:
     python main.py \
@@ -45,6 +44,7 @@ brand: ej  # El Jannah
 country: au  # Australia
 
 # Processing parameters
+max_samples: null  # Set to limit samples for testing
 params:
   audio_channel: mic  # 'mic' for customer or 'spk' for employee
   max_samples: -1  # -1 for all samples
@@ -89,30 +89,20 @@ processors:
   - _target_: sdp.processors.modify_manifest.limit_samples.LimitManifestEntries
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_01.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_02.json
-    max_entries: ${params.max_samples}
+    max_entries: ${max_samples}
 
-  # ========== STAGE 3: Convert to 16kHz mono ==========
-  - _target_: sdp.processors.FfmpegConvert
+
+  # ========== STAGE 3: Get audio duration ==========
+  - _target_: sdp.processors.GetAudioDuration
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_02.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_03.json
-    input_file_key: audio_filepath
-    output_file_key: audio_filepath  
-    id_key: audio_id
-    converted_audio_dir: ${output_dir}/${params.source_lang}/converted_audio/
-    target_samplerate: 16000
-    target_nchannels: 1
-
-  # ========== STAGE 4: Get audio duration ==========
-  - _target_: sdp.processors.GetAudioDuration
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_03.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_04.json
     audio_filepath_key: audio_filepath
     duration_key: duration
 
-  # ========== STAGE 5: Language detection with Whisper ==========
+  # ========== STAGE 4: Language detection with Whisper ==========
   - _target_: sdp.processors.FasterWhisperInference
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_04.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_05.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_03.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_04.json
     model_size_or_path: large-v3
     num_devices: -1  # Use all available GPUs
     output_dir: ${output_dir}/${params.source_lang}/step_05
@@ -123,27 +113,27 @@ processors:
     save_timestamps_separately: false
     skip_corrupted_audios: true
 
-  # ========== STAGE 6: Filter by language ==========
+  # ========== STAGE 5: Filter by language ==========
   - _target_: sdp.processors.LambdaExpression
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_05.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_06.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_04.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_05.json
     new_field: lid_verified
     expression: '(entry.language == "${params.source_lang}") & (entry.language_probability >= ${params.min_audio_lid_probability})'
     filter: true
 
-  # ========== STAGE 7: Drop language detection fields ==========
+  # ========== STAGE 6: Drop language detection fields ==========
   - _target_: sdp.processors.DropSpecifiedFields
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_06.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_07.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_05.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_06.json
     fields_to_drop:
       - language
       - language_probability
       - lid_verified
 
-  # ========== STAGE 8: Full transcription with segments ==========
+  # ========== STAGE 7: Full transcription with segments ==========
   - _target_: sdp.processors.FasterWhisperInference
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_07.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_08.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_06.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_07.json
     model_size_or_path: large-v3  # Using standard large-v3 for English
     output_dir: ${output_dir}/${params.source_lang}/step_08
     num_devices: -1
@@ -152,24 +142,24 @@ processors:
     save_timestamps_separately: false
     skip_corrupted_audios: true
 
-  # ========== STAGE 9: Drop duration (will be recalculated per segment) ==========
+  # ========== STAGE 8: Drop duration (will be recalculated per segment) ==========
   - _target_: sdp.processors.DropSpecifiedFields
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_08.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_09.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_07.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_08.json
     fields_to_drop:
       - duration
 
-  # ========== STAGE 9.5: Filter out empty segments before ListToEntries ==========
+  # ========== STAGE 9: Filter out empty segments before ListToEntries ==========
   - _target_: sdp.processors.LambdaExpression
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_09.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_09_filtered.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_08.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_09.json
     new_field: has_segments
     expression: 'len(entry.segments) > 0'
     filter: true
 
   # ========== STAGE 10: Convert segments list to individual entries ==========
   - _target_: sdp.processors.ListToEntries
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_09_filtered.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_09.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_10.json
     field_with_list: segments
 
@@ -335,7 +325,7 @@ processors:
       top_p: 0.95
       top_k: 50
       repetition_penalty: 1.0
-      max_tokens: 256
+      max_tokens: 2048
     apply_chat_template:
       tokenize: false
       add_generation_prompt: true
@@ -358,14 +348,14 @@ processors:
       max_num_batched_tokens: 512
       enforce_eager: true
       dtype: float16
-      gpu_memory_utilization: 0.85
+      gpu_memory_utilization: 0.9
       max_num_seqs: 4
     inference:
       temperature: 0.3
       top_p: 0.8
       top_k: 20
       repetition_penalty: 1.05
-      max_tokens: 256
+      max_tokens: 2048
     apply_chat_template:
       tokenize: false
       add_generation_prompt: true

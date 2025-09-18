@@ -5,20 +5,20 @@
 
 # Set the paths
 SDP_DIR="/home/razhan/NeMo-speech-data-processor"
-DATA_DIR="${SDP_DIR}/data/audio"
+DATA_DIR="/data/razhan/speech-pipeline/audio"
 BRAND="ej"  # El Jannah
 COUNTRY="au"  # Australia
 CUTOFF_DATE=$(date +%Y%m%d)  # Today's date
 OUTPUT_DIR="${SDP_DIR}/outputs/${BRAND}-${COUNTRY}-${CUTOFF_DATE}_$(date +%H%M%S)"
 
 # GPU Configuration for vLLM
-export CUDA_VISIBLE_DEVICES=1  # Use GPU 1 for vLLM inference
+export CUDA_VISIBLE_DEVICES=0,1  # Use GPU 1 for vLLM inference
 export TOKENIZERS_PARALLELISM=false  # Avoid tokenizer warnings
 
 # Configuration parameters
 AUDIO_CHANNEL="mic"  # Change to "spk" for employee audio
-MAX_SAMPLES=50      # Testing with 10 samples (change to -1 for all samples)
-CONFIG_NAME="config.yaml"  # El Jannah Australia pipeline
+MAX_SAMPLES=10     # Testing with 10 samples first
+CONFIG_NAME="config_ej_optimized.yaml"  # Optimized El Jannah pipeline (no conversion, no punctuation restoration)
 
 # Tar creation parameters
 CREATE_TAR=false     # Disabled for testing (set to true for production)
@@ -81,7 +81,7 @@ echo ""
 echo "Processing Summary:"
 echo "-------------------"
 
-# Check for final manifest
+# Check for final manifest (optimized config ends at manifest_30.json)
 FINAL_MANIFEST="${OUTPUT_DIR}/en/manifest_30.json"
 if [ -f "${FINAL_MANIFEST}" ]; then
     ENTRY_COUNT=$(wc -l < "${FINAL_MANIFEST}")

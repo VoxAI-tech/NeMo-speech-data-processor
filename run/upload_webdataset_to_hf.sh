@@ -83,68 +83,24 @@ license: apache-2.0
 task_categories:
 - automatic-speech-recognition
 - text-generation
-pretty_name: Polish Drive-thru Conversations
+pretty_name: El Jannah Drive-thru Conversations
 size_categories:
 - 1K<n<10K
 ---
 
-# Polish Drive-thru Conversations Dataset
+# El Jannah Drive-thru Conversations Dataset
 
-This dataset contains transcribed Polish drive-thru conversations from Burger King Poland.
+This dataset contains transcribed El Jannah drive-thru conversations from El Jannah Australia.
 
 ## Dataset Details
 
-- **Language**: Polish (pl)
+- **Language**: English (en)
 - **Domain**: Drive-thru conversations
 - **Format**: WebDataset (tar files)
 - **Processing Pipeline**: ${PIPELINE_TYPE}
 - **ASR Model**: VoxAI/whisper-large-v3-polish-ct2
 - **Corrections**: $([ "$PIPELINE_TYPE" == "qwen" ] && echo "Qwen3-8B LLM" || echo "Gemini 2.5 Pro Audio")
 
-## Dataset Structure
-
-Each sample contains:
-- \`audio\`: Audio file (WAV format, 16kHz, mono)
-- \`text\`: Transcribed and corrected text
-- \`metadata\`: Additional information including:
-  - \`duration\`: Audio duration in seconds
-  - \`segment_id\`: Unique segment identifier
-  - \`session_id\`: Conversation session ID
-  - \`device_id\`: Recording device ID
-  - \`audio_type\`: Speaker type (customer/employee)
-  - \`dataset\`: Source dataset identifier
-  - \`language\`: Language code
-
-## Processing Pipeline
-
-1. Audio conversion to 16kHz mono
-2. Language detection and filtering (Polish only)
-3. ASR transcription using Polish-optimized Whisper model
-4. Hallucination detection and filtering
-5. Menu-aware correction with fuzzy matching
-6. LLM-based corrections for:
-   - Menu item spelling
-   - Polish language specific errors
-   - Punctuation restoration
-7. Text normalization
-
-## Usage
-
-\`\`\`python
-from webdataset import WebDataset
-
-# Load the dataset
-dataset = WebDataset("path/to/dataset/shard-{000000..999999}.tar")
-
-for sample in dataset:
-    audio = sample["audio"]
-    text = sample["text"]
-    metadata = sample["json"]
-\`\`\`
-
-## License
-
-This dataset is released under the Apache 2.0 License.
 EOMD
 
 echo "Created dataset card: $README_PATH"

@@ -68,12 +68,17 @@ class vLLMInference(BaseProcessor):
                  model: dict = {},
                  inference: dict = {},
                  apply_chat_template: dict = {},
+                 vllm_gpu_id: int = None,
                  **kwargs):
 
         from vllm import SamplingParams
         from transformers import AutoTokenizer
+        import os
 
         super().__init__(**kwargs)
+
+        # Store vllm_gpu_id for later use in process() method
+        self.vllm_gpu_id = vllm_gpu_id
     
         self.prompt = prompt
         self.prompt_field = prompt_field
@@ -130,6 +135,7 @@ class vLLMInference(BaseProcessor):
     def process(self):
         """Main processing function: reads entries, builds prompts, runs generation, writes results."""
         from vllm import LLM
+        import os
 
         entries = []
         entry_prompts = []
@@ -142,9 +148,22 @@ class vLLMInference(BaseProcessor):
                 entry_prompt = self.get_entry_prompt(data_entry)
                 entry_prompts.append(entry_prompt)
 
-        # Run vLLM inference
-        llm = LLM(**self.model_params)
-        outputs = llm.generate(entry_prompts, self.sampling_params)
+        # Temporarily set CUDA_VISIBLE_DEVICES if vllm_gpu_id is specified
+        original_cuda_devices = os.environ.get('CUDA_VISIBLE_DEVICES', None)
+        if self.vllm_gpu_id is not None:
+            os.environ['CUDA_VISIBLE_DEVICES'] = str(self.vllm_gpu_id)
+
+        try:
+            # Run vLLM inference
+            llm = LLM(**self.model_params)
+            outputs = llm.generate(entry_prompts, self.sampling_params)
+        finally:
+            # Restore original CUDA_VISIBLE_DEVICES
+            if self.vllm_gpu_id is not None:
+                if original_cuda_devices is None:
+                    os.environ.pop('CUDA_VISIBLE_DEVICES', None)
+                else:
+                    os.environ['CUDA_VISIBLE_DEVICES'] = original_cuda_devices
 
         # Write results to output manifest
         with open(self.output_manifest_file, 'w', encoding='utf8') as fout:

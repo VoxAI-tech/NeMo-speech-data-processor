@@ -18,6 +18,7 @@ import json
 from copy import deepcopy
 from tqdm import tqdm
 import librosa
+import numpy as np
 from dataclasses import dataclass, field, asdict, is_dataclass
 from typing import List, Optional, Any, Dict
 from omegaconf import OmegaConf, MISSING
@@ -209,7 +210,7 @@ class FasterWhisperInference(BaseProcessor):
                output_manifest_file: /your/output/manifest.json
                model_size_or_path: base
     """
-    def __init__(self, 
+    def __init__(self,
                  input_manifest_file: str,
                  output_manifest_file: Optional[str] = None,
                  model_size_or_path: str = "base",
@@ -225,6 +226,7 @@ class FasterWhisperInference(BaseProcessor):
                  language_detection_only: bool = False,
                  in_memory_chunksize: int = 100000,
                  audio_filepath_field: str = 'audio_filepath',
+                 normalize_channels: bool = False,
                  ):
         
         super().__init__(input_manifest_file = input_manifest_file,
@@ -267,6 +269,7 @@ class FasterWhisperInference(BaseProcessor):
         self.audio_filepath_field = audio_filepath_field
         self.language_detection_only = language_detection_only
         self.in_memory_chunksize = in_memory_chunksize
+        self.normalize_channels = normalize_channels
 
     @staticmethod 
     def setup_devices(device: str = "auto", num_devices: int = -1):
@@ -359,9 +362,70 @@ class FasterWhisperInference(BaseProcessor):
             for entry in batch:
                 yield entry
     
+    def _normalize_stereo_channels(self, audio: np.ndarray, boost_factor: float = 1.25) -> np.ndarray:
+        """
+        Gently boost the quieter channel in stereo audio.
+
+        Args:
+            audio: Audio data (mono or stereo)
+            boost_factor: Factor to boost quieter channel (default 1.25 = 25% boost)
+
+        Returns:
+            Normalized audio data
+        """
+        if len(audio.shape) != 2 or audio.shape[1] != 2:
+            return audio
+
+        left = audio[:, 0]
+        right = audio[:, 1]
+
+        rms_left = np.sqrt(np.mean(left**2))
+        rms_right = np.sqrt(np.mean(right**2))
+
+        if rms_left > rms_right:
+            gain_left = 1.0
+            gain_right = boost_factor
+        else:
+            gain_right = 1.0
+            gain_left = boost_factor
+
+        normalized = audio.copy()
+        normalized[:, 0] = left * gain_left
+        normalized[:, 1] = right * gain_right
+
+        max_val = np.max(np.abs(normalized))
+        if max_val > 1.0:
+            normalized = normalized / max_val * 0.99
+
+        return normalized
+
+    def _load_and_normalize_audio(self, audio_filepath: str) -> np.ndarray:
+        """
+        Load audio and apply channel normalization if enabled.
+
+        Args:
+            audio_filepath: Path to audio file
+
+        Returns:
+            Audio array (mono)
+        """
+        audio, sr = librosa.load(audio_filepath, sr=None, mono=False)
+
+        if self.normalize_channels and len(audio.shape) > 1:
+            audio = self._normalize_stereo_channels(audio.T).T
+
+        if len(audio.shape) > 1:
+            audio = librosa.to_mono(audio)
+
+        return audio
+
     def _get_audio_segment(self, audio_filepath: str, offset: float, duration: float):
         """Loads a segment of audio based on offset and duration."""
-        audio, sr = librosa.load(audio_filepath, sr=None)
+        audio, sr = librosa.load(audio_filepath, sr=None, mono=False)
+        if self.normalize_channels:
+            audio = self._normalize_stereo_channels(audio.T if len(audio.shape) > 1 else audio).T if len(audio.shape) > 1 else audio
+        if len(audio.shape) > 1:
+            audio = librosa.to_mono(audio)
         start_sample = int(offset * sr)
         end_sample = int((offset + duration) * sr)
         audio_segment = audio[start_sample : end_sample]
@@ -422,7 +486,10 @@ class FasterWhisperInference(BaseProcessor):
 
                 if self.language_detection_only:
                     try:
-                        audio = decode_audio(audio_filepath)
+                        if self.normalize_channels:
+                            audio = self._load_and_normalize_audio(audio_filepath)
+                        else:
+                            audio = decode_audio(audio_filepath)
                         features = model.feature_extractor(audio)
                         language, language_probability, all_language_probs = model.detect_language(features = features,
                                                 vad_filter = self.config.inference.vad_filter,
@@ -442,9 +509,11 @@ class FasterWhisperInference(BaseProcessor):
                     try:
                         if self.config.dataset.offset:
                             audio = self._get_audio_segment(audio_filepath, entry['offset'], entry['duration'])
+                        elif self.normalize_channels:
+                            audio = self._load_and_normalize_audio(audio_filepath)
                         else:
                             audio = audio_filepath
-                    
+
                         segments, info = model.transcribe(audio = audio, **inference_cfg)
                     
                     except Exception:

@@ -95,14 +95,14 @@ processors:
   # ========== STAGE 3: Get audio duration ==========
   - _target_: sdp.processors.GetAudioDuration
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_02.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_03.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_02.json
     audio_filepath_key: audio_filepath
     duration_key: duration
 
   # ========== STAGE 4: Language detection with Whisper ==========
   - _target_: sdp.processors.FasterWhisperInference
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_03.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_04.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_02.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_02.json
     model_size_or_path: large-v3
     num_devices: -1  # Use all available GPUs
     output_dir: ${output_dir}/${params.source_lang}/step_05
@@ -115,16 +115,16 @@ processors:
 
   # ========== STAGE 5: Filter by language ==========
   - _target_: sdp.processors.LambdaExpression
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_04.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_05.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_02.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_03.json
     new_field: lid_verified
     expression: '(entry.language == "${params.source_lang}") & (entry.language_probability >= ${params.min_audio_lid_probability})'
     filter: true
 
   # ========== STAGE 6: Drop language detection fields ==========
   - _target_: sdp.processors.DropSpecifiedFields
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_05.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_06.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_03.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_04.json
     fields_to_drop:
       - language
       - language_probability
@@ -132,8 +132,8 @@ processors:
 
   # ========== STAGE 7: Full transcription with segments ==========
   - _target_: sdp.processors.FasterWhisperInference
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_06.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_07.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_04.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_05.json
     model_size_or_path: large-v3  # Using standard large-v3 for English
     output_dir: ${output_dir}/${params.source_lang}/step_08
     num_devices: -1
@@ -144,29 +144,29 @@ processors:
 
   # ========== STAGE 8: Drop duration (will be recalculated per segment) ==========
   - _target_: sdp.processors.DropSpecifiedFields
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_07.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_08.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_05.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_06.json
     fields_to_drop:
       - duration
 
   # ========== STAGE 9: Filter out empty segments before ListToEntries ==========
   - _target_: sdp.processors.LambdaExpression
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_08.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_09.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_06.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_07.json
     new_field: has_segments
     expression: 'len(entry.segments) > 0'
     filter: true
 
   # ========== STAGE 10: Convert segments list to individual entries ==========
   - _target_: sdp.processors.ListToEntries
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_09.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_10.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_07.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_08.json
     field_with_list: segments
 
   # ========== STAGE 11: Keep only needed segment fields ==========
   - _target_: sdp.processors.KeepOnlySpecifiedFields
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_10.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_11.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_08.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_09.json
     fields_to_keep:
       - audio_filepath
       - id
@@ -181,22 +181,22 @@ processors:
 
   # ========== STAGE 12: Calculate segment duration ==========
   - _target_: sdp.processors.LambdaExpression
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_11.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_12.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_09.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_10.json
     new_field: duration
     expression: 'entry.end - entry.start'
 
   # ========== STAGE 13: Filter by duration ==========
   - _target_: sdp.processors.DropHighLowDuration
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_12.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_13.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_10.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_11.json
     high_duration_threshold: ${params.max_audio_duration}
     low_duration_threshold: ${params.min_audio_duration}
 
   # ========== STAGE 14: Rename fields for segments ==========
   - _target_: sdp.processors.RenameFields
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_13.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_14.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_11.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_12.json
     rename_fields:
       start: offset
       id: segment_id
@@ -204,8 +204,8 @@ processors:
 
   # ========== STAGE 15: Keep core fields ==========
   - _target_: sdp.processors.KeepOnlySpecifiedFields
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_14.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_15.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_12.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_13.json
     fields_to_keep:
       - source_lang
       - audio_filepath
@@ -219,8 +219,8 @@ processors:
 
   # ========== STAGE 16: Transcription by slice (more accurate for segments) ==========
   - _target_: sdp.processors.FasterWhisperInference
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_15.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_16.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_13.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_14.json
     model_size_or_path: large-v3  # Using standard large-v3 for English
     num_devices: -1
     output_dir: ${output_dir}/${params.source_lang}/step_16
@@ -232,8 +232,8 @@ processors:
 
   # ========== STAGE 17: Keep transcription results ==========
   - _target_: sdp.processors.KeepOnlySpecifiedFields
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_16.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_17.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_14.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_15.json
     fields_to_keep:
       - source_lang
       - audio_filepath
@@ -248,38 +248,38 @@ processors:
 
   # ========== STAGE 18: Rename pred_text to text ==========
   - _target_: sdp.processors.RenameFields
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_17.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_18.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_15.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_16.json
     rename_fields:
       pred_text: text
 
   # ========== STAGE 19: Drop empty transcriptions ==========
   - _target_: sdp.processors.DropIfRegexMatch
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_18.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_19.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_16.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_17.json
     text_key: text
     regex_patterns:
       - '^\s*$'  # Empty or whitespace-only
 
   # ========== STAGE 20: Detect Whisper hallucinations ==========
   - _target_: sdp.processors.DetectWhisperHallucinationFeatures
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_19.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_20.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_17.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_18.json
     common_hall_file: ${sdp_dir}/dataset_configs/vox_pipeline/partials/common_phrases/${params.source_lang}.txt
     text_field: text
 
   # ========== STAGE 21: Filter hallucinated segments ==========
   - _target_: sdp.processors.LambdaExpression
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_20.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_21.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_18.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_19.json
     new_field: is_hallucinated
     expression: '(not entry.hall_repeated_ngrams) & (not entry.hall_long_word) & (not entry.hall_frequent_single_word)'
     filter: true
 
   # ========== STAGE 22: Clean hallucination fields ==========
   - _target_: sdp.processors.KeepOnlySpecifiedFields
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_21.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_22.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_19.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_20.json
     fields_to_keep:
       - source_lang
       - audio_filepath
@@ -294,8 +294,8 @@ processors:
       
   # ========== STAGE 23: Menu-Aware Correction (Fuzzy Matching - First Pass) ==========
   - _target_: sdp.processors.menu_aware_correction.MenuAwareCorrection
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_22.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_23.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_20.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_21.json
     menu_vocabulary_file: ${sdp_dir}/dataset_configs/vox_pipeline/assets/vocabularies/menu_vocabulary.json  # El Jannah vocabulary
     text_field: text
     corrected_field: text_menu_corrected
@@ -306,8 +306,8 @@ processors:
   # ========== STAGE 24: Qwen LLM Menu Correction (Instead of Gemini) ==========
   # Uses Qwen to correct menu item spellings based on context
   - _target_: sdp.processors.inference.llm.vllm.vllm.vLLMInference
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_23.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_24.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_21.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_22.json
     prompt_file: ${sdp_dir}/dataset_configs/vox_pipeline/partials/menu_correction_prompts/${params.source_lang}.yaml
     generation_field: llm_corrected_text
     model:
@@ -336,8 +336,8 @@ processors:
 
   # ========== STAGE 25: Punctuation & Capitalization Restoration with Qwen ==========
   - _target_: sdp.processors.inference.llm.vllm.vllm.vLLMInference
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_25.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_22.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_23.json
     generation_field: src_text
     prompt_file: ${sdp_dir}/dataset_configs/vox_pipeline/partials/pr_recovery_prompts/${params.source_lang}.yaml
     model:
@@ -363,22 +363,22 @@ processors:
 
   # ========== STAGE 26: Clean Qwen Generation Output ==========
   - _target_: sdp.processors.CleanQwenGeneration
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_25.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_26.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_23.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_24.json
     text_field: llm_corrected_text  # Original text to keep
     generation_field: src_text  # Qwen output to clean
 
   # ========== STAGE 27: Text Normalization with Regex ==========
   - _target_: sdp.processors.SubRegex
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_26.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_27.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_24.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_25.json
     text_key: src_text  # Apply to Qwen-processed text
     regex_params_yaml: ${sdp_dir}/dataset_configs/vox_pipeline/partials/subregex_params/${params.use_regex}.yaml
 
   # ========== STAGE 28: Drop intermediate text fields ==========
   - _target_: sdp.processors.DropSpecifiedFields
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_27.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_28.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_25.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_26.json
     fields_to_drop:
       - text
       - text_menu_corrected
@@ -389,24 +389,24 @@ processors:
 
   # ========== STAGE 29: Rename final text field ==========
   - _target_: sdp.processors.RenameFields
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_28.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_29.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_26.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_27.json
     rename_fields:
       src_text: text  # Final cleaned text
       offset: source_audio_offset
       
   # ========== STAGE 30: Add constant metadata fields ==========
   - _target_: sdp.processors.AddConstantFields
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_29.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_30.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_27.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_28.json
     fields:
       dataset: ${brand}_${country}_drive_thru
       language: ${params.source_lang}
     
   # ========== STAGE 31: Final field selection ==========
   - _target_: sdp.processors.flexible_field_keeper.FlexibleKeepFields
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_30.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_31.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_28.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_29.json
     fields_to_keep:
       - audio_filepath
       - text
@@ -424,8 +424,8 @@ processors:
 
   # ========== STAGE 32: Convert to WebDataset (TAR archives with wav/json pairs) ==========
   - _target_: sdp.processors.convert_to_webdataset.ConvertToWebDataset
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_31.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_32.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_29.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_30.json
     output_dir: ${output_dir}/${params.source_lang}/webdataset
     shard_size: 100  # Files per shard
     split: train

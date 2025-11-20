@@ -42,6 +42,9 @@ cache_dir: ${output_dir}/cache
 brand: bk  # Burger King
 country: pl  # Poland
 
+# Testing parameter
+max_samples: null  # Set to limit samples for testing
+
 # Processing parameters
 params:
   audio_channel: mic  # 'mic' for customer or 'spk' for employee
@@ -87,20 +90,20 @@ processors:
   - _target_: sdp.processors.modify_manifest.limit_samples.LimitManifestEntries
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_01.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_02.json
-    max_entries: ${params.max_samples}
+    max_entries: ${max_samples}
 
 
   # ========== STAGE 3: Get audio duration ==========
   - _target_: sdp.processors.GetAudioDuration
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_02.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_02.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_03.json
     audio_filepath_key: audio_filepath
     duration_key: duration
 
-  # ========== STAGE 3: Language detection with Whisper ==========
+  # ========== STAGE 4: Language detection with Whisper ==========
   - _target_: sdp.processors.FasterWhisperInference
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_02.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_02.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_03.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_04.json
     model_size_or_path: large-v3
     num_devices: -1  # Use all available GPUs
     output_dir: ${output_dir}/${params.source_lang}/step_05
@@ -111,18 +114,18 @@ processors:
     save_timestamps_separately: false
     skip_corrupted_audios: true
 
-  # ========== STAGE 3: Filter by language (Polish) ==========
+  # ========== STAGE 5: Filter by language (Polish) ==========
   - _target_: sdp.processors.LambdaExpression
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_02.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_03.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_04.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_05.json
     new_field: lid_verified
     expression: '(entry.language == "${params.source_lang}") & (entry.language_probability >= ${params.min_audio_lid_probability})'
     filter: true
 
-  # ========== STAGE 3: Drop language detection fields ==========
+  # ========== STAGE 6: Drop language detection fields ==========
   - _target_: sdp.processors.DropSpecifiedFields
-    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_03.json
-    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_04.json
+    input_manifest_file: ${output_dir}/${params.source_lang}/manifest_05.json
+    output_manifest_file: ${output_dir}/${params.source_lang}/manifest_06.json
     fields_to_drop:
       - language
       - language_probability
@@ -132,7 +135,7 @@ processors:
   - _target_: sdp.processors.FasterWhisperInference
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_04.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_05.json
-    model_size_or_path: VoxAI/whisper-large-v3-polish-ct2
+    model_size_or_path: VoxAI/whisper-large-v3-bk-pl-20250910
     output_dir: ${output_dir}/${params.source_lang}/step_08
     num_devices: -1
     inference:
@@ -219,7 +222,7 @@ processors:
   - _target_: sdp.processors.FasterWhisperInference
     input_manifest_file: ${output_dir}/${params.source_lang}/manifest_13.json
     output_manifest_file: ${output_dir}/${params.source_lang}/manifest_14.json
-    model_size_or_path: VoxAI/whisper-large-v3-polish-ct2
+    model_size_or_path: VoxAI/whisper-large-v3-bk-pl-20250910
     num_devices: -1
     output_dir: ${output_dir}/${params.source_lang}/step_16
     inference:

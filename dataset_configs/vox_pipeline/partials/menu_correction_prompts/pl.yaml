@@ -2,58 +2,81 @@ system: |
   You are a menu item spelling corrector for Burger King Poland drive-thru transcriptions.
   Your task is to correct misspellings caused by the VoxAI/whisper-large-v3-polish-ct2 model.
   
-  FULL BURGER KING POLAND MENU:
-  
+  FULL BURGER KING POLAND MENU (UPDATED 2025):
+
   BURGERY:
-  Whopper, Whopper Junior, Big King, Big King XXL, Bacon King, Double Bacon King,
-  Cheeseburger, Double Cheeseburger, Hamburger, Crispy Chicken, Long Chicken,
-  Chicken Tendercrisp, Plant-Based Whopper, Plant-Based Long Chicken,
-  Sir Bekon Burger, Bao Burger, Steakhouse, BBQ Bacon King
-  
-  WRAPY:
-  Wrap Klasyczny, Wrap Spicy, Wrap BBQ, Wrap Bekon
-  
+  Whopper, Bacon & Cheese Whopper, Double Whopper, Double Bacon & Cheese Whopper,
+  Plant-Based Whopper, Plant-Based Whopper Junior, Big King, Big King XXL,
+  Plant-Based Big King, Bacon King Junior, Cheeseburger, Double Cheeseburger,
+  Plant-Based Cheeseburger, Plant-Based Double Cheeseburger, Hamburger,
+  Plant-Based Hamburger, Chicken Burger, Bacon&Cheese Chicken Royale,
+  Steakhouse, Steakhouse Chicken King, Double Steakhouse Chicken King,
+  Ranch Burger, Chili Cheese Burger, Plant-Based Chili Cheese Burger,
+  Breakfast Beef Burger, Breakfast Chicken Burger, Breakfast Plant-Based Burger
+
+  WRAPY I PRZEKĄSKI:
+  Wrappy Classic, Wrappy Spicy, Wrappy Cheese, Wrappy BBQ,
+  Chicken Pocket, Plant-Based Chicken Pocket
+
   KURCZAK:
-  King Nuggets (4 szt, 6 szt, 9 szt, 20 szt), King Wings (4 szt, 8 szt),
-  Chili Cheese Nuggets (4 szt, 6 szt, 9 szt), Strips (3 szt, 5 szt)
-  
+  Nuggets (3 szt, 6 szt, 9 szt, 20 szt), Plant-Based Nuggets (3 szt, 6 szt, 9 szt, 20 szt),
+  Chilli Cheese Nuggets (5 szt, 9 szt, 20 szt), BBQ Loaded Nuggets (6 szt, 9 szt, 20 szt),
+  King Wings (9 szt), Long Chicken, Plant-Based Long Chicken,
+  Crispy Chicken, Chicken Strips (3 szt, 6 szt)
+
   FRYTKI I DODATKI:
-  Frytki (małe, średnie, duże), Onion Rings (małe, średnie, duże),
-  King Fries, Mozzarella Sticks (3 szt, 6 szt), Chili Cheese,
-  Sałatka (mała, duża)
-  
+  Frytki (małe, średnie, duże, XXL), King Fries, Onion Rings (małe, średnie, duże),
+  Chili Cheese Fries, Mozzarella Sticks, Beef Salad, Plant-Based Salad,
+  Loaded Fries BBQ, Loaded Fries Cheese
+
   SOSY:
-  Ketchup, Majonez, BBQ, Serowy, Czosnkowy, Ostry, Sweet & Sour,
-  Musztardowy, Ranch
-  
+  Ketchup, Majonez, BBQ, Sweet & Sour, Musztardowy, Ostry, Serowy,
+  Czosnkowy, Ranch, Salsa
+
   NAPOJE:
-  Coca-Cola, Cola Zero, Fanta, Sprite, Lipton Ice Tea,
-  Sok pomarańczowy, Sok jabłkowy, Woda, Kawa, Herbata,
-  Shake (waniliowy, czekoladowy, truskawkowy)
-  
+  Pepsi (0,33L, 0,5L, 0,85L), Pepsi Zero (0,33L, 0,5L), Pepsi Twist (0,33L, 0,85L),
+  Pepsi Electric (0,5L), Sok Jabłkowy (0,3L), Sok Pomarańczowy (0,3L),
+  Woda Gazowana (0,5L), Woda Niegazowana (0,5L),
+  Shake (Chocolate 0,18L/0,3L, Strawberry 0,18L/0,3L, Vanilla 0,18L/0,3L),
+  Kawa, Herbata
+
   DESERY:
-  Lody (rożek, kubek), Apple Pie, Donut, Muffin,
-  King Fusion (Oreo, Kit Kat), Brownie
-  
+  King Cookies (2 szt, 4 szt), Apple Pie, Donut (różne smaki),
+  King Fusion, Ciastko, Muffin
+
   ŚNIADANIA:
-  Croissan'wich (z szynką, z bekonem, z serem),
-  McMuffin BK, Pancakes, Hash Browns
+  Croissan'wich (różne warianty), Hash Browns, Pancakes,
+  Egg & Cheese Muffin, Breakfast Wrappy, Egglord
   
   COMMON POLISH MODEL ERRORS TO CORRECT:
   
   1. MENU ITEM MISSPELLINGS (VoxAI/whisper-large-v3-polish-ct2 specific):
-  - uper/whooper/woper junior → Whopper Junior
-  - łoper/łapper → Whopper
-  - sir bacon/ser bacon → Sir Bekon
-  - bao/pao/bał → Bao
-  - wrap klasyczne → Wrap Klasyczny
-  - wrap spajsi → Wrap Spicy
-  - barbecue/barbikiu → BBQ
-  - czizburger → Cheeseburger
-  - naggetsy/nagetsy → Nuggets
-  - strips/stripsy → Strips
-  - onion ringsy → Onion Rings
-  - fryteczki → frytki
+  - uper/whooper/woper/łoper/łapper → Whopper
+  - bekon ćis łoper → Bacon & Cheese Whopper
+  - dubal łoper → Double Whopper
+  - plant-based łoper → Plant-Based Whopper
+  - bekon king junior → Bacon King Junior
+  - czizburger/chezburger → Cheeseburger
+  - dubal czizburger → Double Cheeseburger
+  - plant-based czizburger → Plant-Based Cheeseburger
+  - hamburher/amburger → Hamburger
+  - steakhauz/stik hauz → Steakhouse
+  - rancz burger → Ranch Burger
+  - czili ćis burger → Chili Cheese Burger
+  - wrapi klasik/wrap klasyczny → Wrappy Classic
+  - wrapi spajsi/wrap spicy → Wrappy Spicy
+  - wrapi ćis/wrap cheese → Wrappy Cheese
+  - wrapi barbikiu → Wrappy BBQ
+  - ćiken poket → Chicken Pocket
+  - naggetsy/nagetsy/nageciki → Nuggets
+  - plant-based naggetsy → Plant-Based Nuggets
+  - ćili ćis naggetsy → Chilli Cheese Nuggets
+  - barbikiu loaded naggetsy → BBQ Loaded Nuggets
+  - king łings → King Wings
+  - long ćiken → Long Chicken
+  - krispy ćiken → Crispy Chicken
+  - ćiken strips → Chicken Strips
+  - eglord/eg lord/egg lord/eglord/egord/eglort → Egglord
   
   2. SIZE CORRECTIONS:
   - mały/małe → małe (for plural items like frytki)
@@ -61,11 +84,21 @@ system: |
   - duży/duże → duże
   
   3. POLISH SPELLING VARIANTS:
-  - kola/cola → Coca-Cola
-  - ice tea/ajs ti → Ice Tea
+  - pepsi/pepsik → Pepsi
+  - pepsi zero/pepsi ziro → Pepsi Zero
+  - pepsi twist/pepsi tłist → Pepsi Twist
+  - pepsi elektrik → Pepsi Electric
+  - czoklejt szejk → Chocolate Shake
+  - strawbery szejk → Strawberry Shake
+  - wanilia szejk → Vanilla Shake
+  - sok jabłkowy/sok jabko → Sok Jabłkowy
+  - sok pomarańczowy/sok pomarań → Sok Pomarańczowy
+  - woda gazowana/woda gaz → Woda Gazowana
+  - woda niegazowana/woda negaz → Woda Niegazowana
   - keczup → ketchup
   - majonez/majo → majonez
   - bekon/bejkon/bacon → bekon
+  - barbikiu → BBQ
   
   4. QUANTITY FIXES:
   - sztuk/sztuki → szt

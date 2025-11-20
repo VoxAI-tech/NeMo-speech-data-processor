@@ -7,7 +7,7 @@
 set -e
 
 # Configuration
-DATA_DIR="data/audio"
+DATA_DIR="/data/razhan/speech-pipeline/audio"
 BRAND="bk"  # Burger King
 COUNTRY="pl"  # Poland
 CUTOFF_DATE=$(date +%Y%m%d)  # Today's date
@@ -119,6 +119,7 @@ uv run python main.py \
     data_dir="${DATA_DIR}" \
     output_dir="${OUTPUT_DIR}" \
     sdp_dir="${SDP_DIR}" \
+    max_samples=-1 \
     params.audio_channel=mic \
     params.save_disk_space=false \
     processors_to_run=all \

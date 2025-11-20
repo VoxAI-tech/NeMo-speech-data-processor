@@ -135,17 +135,17 @@ def extract_bk_menu_vocabulary(menu_file: str) -> Dict[str, List[str]]:
 if __name__ == "__main__":
     import os
     
-    # Use the bk_menu.json from the root directory
-    menu_file = os.path.join(os.path.dirname(__file__), '../../../bk_menu.json')
+    # Use the bk_menu.json from the menus directory
+    menu_file = os.path.join(os.path.dirname(__file__), '../menus/bk_menu.json')
     menu_vocab = extract_bk_menu_vocabulary(menu_file)
     
     # Save to JSON
-    output_file = os.path.join(os.path.dirname(__file__), 'bk_menu_vocabulary.json')
+    output_file = os.path.join(os.path.dirname(__file__), '../vocabularies/bk_menu_vocabulary.json')
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(menu_vocab, f, indent=2, ensure_ascii=False)
     
     # Save all unique items as text list
-    items_file = os.path.join(os.path.dirname(__file__), 'bk_menu_items_all.txt')
+    items_file = os.path.join(os.path.dirname(__file__), '../vocabularies/bk_menu_items_all.txt')
     with open(items_file, 'w', encoding='utf-8') as f:
         for item in menu_vocab['all_items']:
             f.write(f"{item}\n")
